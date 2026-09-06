@@ -5,7 +5,8 @@
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
-    "check": "node -e \"console.log('Desktop package scaffold verified')\""
+    "check": "node -e \"console.log('Desktop package scaffold verified')\"",
+    "test": "vitest run"
   },
   "dependencies": {
     "@workaholic/shared": "*"

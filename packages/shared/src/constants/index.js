@@ -57,3 +57,16 @@ export const ERROR_CODE = Object.freeze({
   TEMPORARY_FAILURE: 'TEMPORARY_FAILURE',
   INTERNAL_ERROR: 'INTERNAL_ERROR',
 });
+
+export const RECURRENCE_FREQUENCY = Object.freeze({
+  DAILY: 'DAILY',
+  WEEKLY: 'WEEKLY',
+  MONTHLY: 'MONTHLY',
+  YEARLY: 'YEARLY',
+});
+
+export const PLATFORM = Object.freeze({
+  WEB: 'WEB',
+  WINDOWS: 'WINDOWS',
+  ANDROID: 'ANDROID',
+});

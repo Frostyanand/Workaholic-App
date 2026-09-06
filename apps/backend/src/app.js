@@ -4,7 +4,14 @@ import helmet from '@fastify/helmet';
 import { randomUUID } from 'node:crypto';
 import { config } from './core/config.js';
 import { formatErrorResponse } from './core/errors.js';
+import { setupRequestContext } from './core/request-context.js';
 import { healthRoutes } from './modules/health/health.routes.js';
+import { authRoutes } from './modules/auth/auth.routes.js';
+import { usersRoutes } from './modules/users/users.routes.js';
+import { workspacesRoutes } from './modules/workspaces/workspaces.routes.js';
+import { tasksRoutes } from './modules/tasks/tasks.routes.js';
+import { calendarRoutes } from './modules/calendar/calendar.routes.js';
+import { notesRoutes } from './modules/notes/notes.routes.js';
 
 export function createApp(opts = {}) {
   const app = Fastify({
@@ -12,6 +19,9 @@ export function createApp(opts = {}) {
     genReqId: req => req.headers['x-request-id'] || randomUUID(),
     ...opts,
   });
+
+  // Request context decorators (user, workspace, session)
+  setupRequestContext(app);
 
   // Security headers & CORS
   app.register(helmet, { contentSecurityPolicy: false });
@@ -47,8 +57,14 @@ export function createApp(opts = {}) {
     return reply.status(statusCode).send(formatted);
   });
 
-  // Domain Routes
+  // Domain Module Routes
   app.register(healthRoutes, { prefix: '/api/v1' });
+  app.register(authRoutes, { prefix: '/api/v1/auth' });
+  app.register(usersRoutes, { prefix: '/api/v1/users' });
+  app.register(workspacesRoutes, { prefix: '/api/v1/workspaces' });
+  app.register(tasksRoutes, { prefix: '/api/v1/tasks' });
+  app.register(calendarRoutes, { prefix: '/api/v1/calendar' });
+  app.register(notesRoutes, { prefix: '/api/v1/notes' });
 
   return app;
 }

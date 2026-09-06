@@ -2,12 +2,14 @@
   "expo": {
     "name": "Workaholic",
     "slug": "workaholic",
+    "scheme": "workaholic",
     "version": "0.1.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
+    "backgroundColor": "#0a0d14",
     "splash": {
-      "backgroundColor": "#0f172a"
+      "backgroundColor": "#0a0d14"
     },
     "ios": {
       "supportsTablet": true,

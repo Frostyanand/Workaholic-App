@@ -3,9 +3,13 @@ import {
   TASK_STATUS,
   TASK_PRIORITY,
   ERROR_CODE,
+  RECURRENCE_FREQUENCY,
+  PLATFORM,
   createTaskSchema,
   idempotencyKeySchema,
   apiErrorSchema,
+  apiSuccessSingleSchema,
+  apiSuccessCollectionSchema,
 } from '../src/index.js';
 
 describe('@workaholic/shared constants', () => {
@@ -61,5 +65,38 @@ describe('@workaholic/shared validation schemas', () => {
       },
     };
     expect(apiErrorSchema.safeParse(errorResponse).success).toBe(true);
+  });
+
+  it('validates standard single-resource success envelope', () => {
+    const singleResponse = {
+      data: {
+        id: '123e4567-e89b-12d3-a456-426614174000',
+        title: 'Test Task',
+      },
+    };
+    expect(apiSuccessSingleSchema.safeParse(singleResponse).success).toBe(true);
+    expect(apiSuccessSingleSchema.safeParse({}).success).toBe(false);
+  });
+
+  it('validates standard collection success envelope with pagination', () => {
+    const collectionResponse = {
+      data: [{ id: '1' }, { id: '2' }],
+      pagination: {
+        limit: 20,
+        cursor: 'cursor_abc',
+      },
+    };
+    expect(apiSuccessCollectionSchema.safeParse(collectionResponse).success).toBe(true);
+    expect(apiSuccessCollectionSchema.safeParse({ data: 'not-an-array' }).success).toBe(false);
+  });
+});
+
+describe('@workaholic/shared domain enums', () => {
+  it('exposes immutable recurrence frequencies and platforms', () => {
+    expect(RECURRENCE_FREQUENCY.DAILY).toBe('DAILY');
+    expect(RECURRENCE_FREQUENCY.WEEKLY).toBe('WEEKLY');
+    expect(PLATFORM.WEB).toBe('WEB');
+    expect(PLATFORM.WINDOWS).toBe('WINDOWS');
+    expect(PLATFORM.ANDROID).toBe('ANDROID');
   });
 });

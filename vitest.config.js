@@ -9,8 +9,14 @@ export default defineConfig({
     alias: {
       react: path.resolve(__dirname, './node_modules/react'),
       'react-dom': path.resolve(__dirname, './node_modules/react-dom'),
+      'react-native': path.resolve(__dirname, './apps/mobile/tests/mocks/react-native.js'),
     },
     dedupe: ['react', 'react-dom', 'react-router', 'react-router-dom'],
+  },
+  esbuild: {
+    loader: 'jsx',
+    include: /\.[jt]sx?$/,
+    exclude: [],
   },
   test: {
     globals: true,

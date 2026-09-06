@@ -41,3 +41,14 @@ export const apiErrorSchema = z.object({
     fields: z.record(z.string()).optional(),
   }),
 });
+
+export const apiSuccessSingleSchema = z.object({
+  data: z.unknown().refine(val => val !== undefined, {
+    message: 'data property is required',
+  }),
+});
+
+export const apiSuccessCollectionSchema = z.object({
+  data: z.array(z.unknown()),
+  pagination: paginationQuerySchema.optional(),
+});
