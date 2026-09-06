@@ -70,3 +70,36 @@ export const PLATFORM = Object.freeze({
   WINDOWS: 'WINDOWS',
   ANDROID: 'ANDROID',
 });
+
+export const WORKSPACE_TYPE = Object.freeze({
+  PERSONAL: 'PERSONAL',
+  TEAM: 'TEAM',
+});
+
+export const MEMBERSHIP_STATUS = Object.freeze({
+  INVITED: 'INVITED',
+  ACTIVE: 'ACTIVE',
+  SUSPENDED: 'SUSPENDED',
+  REMOVED: 'REMOVED',
+});
+
+export const DEVICE_TRUST_STATE = Object.freeze({
+  TRUSTED: 'TRUSTED',
+  UNTRUSTED: 'UNTRUSTED',
+  REVOKED: 'REVOKED',
+});
+
+export const SESSION_TYPE = Object.freeze({
+  WEB: 'WEB',
+  DESKTOP: 'DESKTOP',
+  MOBILE: 'MOBILE',
+  API: 'API',
+});
+
+export const JOB_STATUS = Object.freeze({
+  PENDING: 'PENDING',
+  PROCESSING: 'PROCESSING',
+  COMPLETED: 'COMPLETED',
+  FAILED: 'FAILED',
+  CANCELLED: 'CANCELLED',
+});

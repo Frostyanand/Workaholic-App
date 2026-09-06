@@ -5,11 +5,20 @@ import {
   ERROR_CODE,
   RECURRENCE_FREQUENCY,
   PLATFORM,
+  WORKSPACE_TYPE,
+  MEMBERSHIP_STATUS,
+  DEVICE_TRUST_STATE,
+  SESSION_TYPE,
   createTaskSchema,
   idempotencyKeySchema,
   apiErrorSchema,
   apiSuccessSingleSchema,
   apiSuccessCollectionSchema,
+  createUserSchema,
+  createWorkspaceSchema,
+  createMembershipSchema,
+  createDeviceSchema,
+  createSessionSchema,
 } from '../src/index.js';
 
 describe('@workaholic/shared constants', () => {
@@ -98,5 +107,73 @@ describe('@workaholic/shared domain enums', () => {
     expect(PLATFORM.WEB).toBe('WEB');
     expect(PLATFORM.WINDOWS).toBe('WINDOWS');
     expect(PLATFORM.ANDROID).toBe('ANDROID');
+  });
+
+  it('exposes immutable workspace types, membership statuses, device trust states, and session types', () => {
+    expect(WORKSPACE_TYPE.PERSONAL).toBe('PERSONAL');
+    expect(WORKSPACE_TYPE.TEAM).toBe('TEAM');
+    expect(MEMBERSHIP_STATUS.ACTIVE).toBe('ACTIVE');
+    expect(DEVICE_TRUST_STATE.TRUSTED).toBe('TRUSTED');
+    expect(SESSION_TYPE.WEB).toBe('WEB');
+  });
+});
+
+describe('@workaholic/shared core entity schemas', () => {
+  it('validates a valid user creation payload', () => {
+    const valid = createUserSchema.safeParse({
+      displayName: 'Alice Engineer',
+      email: 'alice@example.com',
+      preferences: { theme: 'dark' },
+    });
+    expect(valid.success).toBe(true);
+    expect(valid.data.timezone).toBe('UTC');
+    expect(valid.data.locale).toBe('en');
+
+    const invalidEmail = createUserSchema.safeParse({
+      displayName: 'Alice',
+      email: 'not-an-email',
+    });
+    expect(invalidEmail.success).toBe(false);
+  });
+
+  it('validates a valid workspace creation payload', () => {
+    const valid = createWorkspaceSchema.safeParse({
+      name: 'Engineering Workspace',
+      ownerUserId: '123e4567-e89b-12d3-a456-426614174000',
+      workspaceType: 'TEAM',
+    });
+    expect(valid.success).toBe(true);
+
+    const invalidOwner = createWorkspaceSchema.safeParse({
+      name: 'Engineering',
+      ownerUserId: 'not-a-uuid',
+    });
+    expect(invalidOwner.success).toBe(false);
+  });
+
+  it('validates membership, device, and session payloads', () => {
+    const validMembership = createMembershipSchema.safeParse({
+      workspaceId: '123e4567-e89b-12d3-a456-426614174000',
+      userId: '223e4567-e89b-12d3-a456-426614174000',
+      role: 'ADMIN',
+      status: 'ACTIVE',
+    });
+    expect(validMembership.success).toBe(true);
+
+    const validDevice = createDeviceSchema.safeParse({
+      userId: '123e4567-e89b-12d3-a456-426614174000',
+      platform: 'WINDOWS',
+      deviceName: 'Workstation 1',
+      trustState: 'TRUSTED',
+    });
+    expect(validDevice.success).toBe(true);
+
+    const validSession = createSessionSchema.safeParse({
+      userId: '123e4567-e89b-12d3-a456-426614174000',
+      sessionTokenHash: 'hash_abc_123',
+      sessionType: 'DESKTOP',
+      expiresAt: '2026-12-31T23:59:59.000Z',
+    });
+    expect(validSession.success).toBe(true);
   });
 });

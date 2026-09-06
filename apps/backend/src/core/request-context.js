@@ -4,9 +4,11 @@
  * - user: Authenticated user context or null
  * - workspace: Active workspace context or null
  * - session: Active session / device context or null
+ * - validated: Validated params/query/body payload or null
  */
 export function setupRequestContext(app) {
   app.decorateRequest('user', null);
   app.decorateRequest('workspace', null);
   app.decorateRequest('session', null);
+  app.decorateRequest('validated', null);
 }

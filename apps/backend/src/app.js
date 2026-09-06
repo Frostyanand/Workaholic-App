@@ -30,10 +30,40 @@ export function createApp(opts = {}) {
     credentials: true,
   });
 
-  // Standard API response header
+  // Request start timing for observability
+  app.addHook('onRequest', async request => {
+    request.startTime = process.hrtime.bigint();
+  });
+
+  // Standard API response headers (x-request-id & x-response-time)
   app.addHook('onSend', async (request, reply, payload) => {
     reply.header('x-request-id', request.id);
+    if (request.startTime) {
+      const diffNs = process.hrtime.bigint() - request.startTime;
+      const ms = Number(diffNs) / 1e6;
+      reply.header('x-response-time', `${ms.toFixed(2)}ms`);
+    }
     return payload;
+  });
+
+  // Structured request completion log
+  app.addHook('onResponse', async (request, reply) => {
+    if (request.startTime && request.log) {
+      const diffNs = process.hrtime.bigint() - request.startTime;
+      const durationMs = Number((Number(diffNs) / 1e6).toFixed(2));
+      request.log.info(
+        {
+          reqId: request.id,
+          method: request.method,
+          url: request.url,
+          statusCode: reply.statusCode,
+          durationMs,
+          userId: request.user?.id || null,
+          workspaceId: request.workspace?.id || null,
+        },
+        'Request completed',
+      );
+    }
   });
 
   // Global Not Found Handler matching API-SPECIFICATION.md
@@ -49,7 +79,14 @@ export function createApp(opts = {}) {
 
   // Global Error Handler matching API-SPECIFICATION.md
   app.setErrorHandler((error, request, reply) => {
-    const statusCode = error.statusCode || 500;
+    let statusCode = error.statusCode || 500;
+    if (error.name === 'SyntaxError' || error.code?.startsWith('FST_ERR_CTP')) {
+      statusCode = 400;
+      error.statusCode = 400;
+      error.code = 'VALIDATION_ERROR';
+      error.message = 'Invalid request payload';
+    }
+
     if (statusCode >= 500) {
       request.log.error({ err: error, reqId: request.id }, 'Unhandled server error');
     }

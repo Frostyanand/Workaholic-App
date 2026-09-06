@@ -52,3 +52,61 @@ export const apiSuccessCollectionSchema = z.object({
   data: z.array(z.unknown()),
   pagination: paginationQuerySchema.optional(),
 });
+
+// User schemas
+export const createUserSchema = z.object({
+  displayName: z.string().trim().min(1).max(255),
+  email: z.string().trim().email().max(255),
+  profileImageReference: z.string().nullable().optional(),
+  timezone: z.string().max(100).default('UTC'),
+  locale: z.string().max(50).default('en'),
+  preferences: z.record(z.unknown()).default({}),
+});
+
+export const updateUserSchema = createUserSchema.partial();
+
+// Workspace schemas
+export const createWorkspaceSchema = z.object({
+  name: z.string().trim().min(1).max(255),
+  workspaceType: z.enum(['PERSONAL', 'TEAM']).default('PERSONAL'),
+  ownerUserId: idSchema,
+});
+
+export const updateWorkspaceSchema = createWorkspaceSchema.partial();
+
+// Workspace membership schemas
+export const createMembershipSchema = z.object({
+  workspaceId: idSchema,
+  userId: idSchema,
+  role: z.enum(['OWNER', 'ADMIN', 'MEMBER', 'VIEWER']).default('MEMBER'),
+  status: z.enum(['INVITED', 'ACTIVE', 'SUSPENDED', 'REMOVED']).default('ACTIVE'),
+});
+
+// Device schemas
+export const createDeviceSchema = z.object({
+  userId: idSchema,
+  platform: z.enum(['WEB', 'WINDOWS', 'ANDROID']),
+  deviceName: z.string().trim().min(1).max(255),
+  applicationVersion: z.string().max(50).nullable().optional(),
+  pushTokenReference: z.string().nullable().optional(),
+  trustState: z.enum(['TRUSTED', 'UNTRUSTED', 'REVOKED']).default('UNTRUSTED'),
+});
+
+// Session schemas
+export const createSessionSchema = z.object({
+  userId: idSchema,
+  deviceId: idSchema.nullable().optional(),
+  sessionTokenHash: z.string().min(1).max(255),
+  sessionType: z.enum(['WEB', 'DESKTOP', 'MOBILE', 'API']).default('WEB'),
+  expiresAt: z.string().datetime({ message: 'expiresAt must be a valid ISO 8601 string' }),
+});
+
+// Background job schemas
+export const createJobSchema = z.object({
+  jobType: z.string().trim().min(1, 'jobType cannot be empty').max(100),
+  payload: z.record(z.unknown()).default({}),
+  queue: z.string().trim().min(1).max(100).default('default'),
+  priority: z.number().int().default(0),
+  runAt: z.string().datetime().optional(),
+  maxAttempts: z.number().int().positive().default(3),
+});
