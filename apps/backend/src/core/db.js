@@ -108,10 +108,11 @@ export async function withTransaction(workFn, poolOrClientOrOptions = pool, mayb
   }
 
   // If already a checked-out client inside a transaction, run within that boundary
-  if (
-    typeof targetPoolOrClient.connect !== 'function' &&
-    typeof targetPoolOrClient.query === 'function'
-  ) {
+  const isAlreadyClient =
+    typeof targetPoolOrClient.release === 'function' ||
+    typeof targetPoolOrClient.connect !== 'function';
+
+  if (isAlreadyClient && typeof targetPoolOrClient.query === 'function') {
     return workFn(targetPoolOrClient);
   }
 

@@ -140,3 +140,76 @@ export async function revokeAllUserSessions(userId, client = pool) {
   const result = await query(sql, [userId], client);
   return result.rowCount || result.rows.length;
 }
+
+/**
+ * Find a session by ID (including revoked or expired for audit/ownership checks)
+ * @param {string} id - Session UUID
+ * @param {import('pg').Pool | import('pg').PoolClient} [client=pool]
+ */
+export async function findSessionById(id, client = pool) {
+  if (!id) throw new TypeError('Session ID is required');
+
+  const sql = `
+    SELECT
+      id,
+      user_id,
+      device_id,
+      session_token_hash,
+      session_type,
+      expires_at,
+      revoked_at,
+      created_at,
+      last_seen_at
+    FROM sessions
+    WHERE id = $1
+  `;
+  const result = await query(sql, [id], client);
+  return mapSessionRow(result.rows[0]);
+}
+
+/**
+ * List active sessions for a user
+ * @param {string} userId - User UUID
+ * @param {import('pg').Pool | import('pg').PoolClient} [client=pool]
+ */
+export async function findActiveSessionsForUser(userId, client = pool) {
+  if (!userId) throw new TypeError('User ID is required');
+
+  const sql = `
+    SELECT
+      id,
+      user_id,
+      device_id,
+      session_token_hash,
+      session_type,
+      expires_at,
+      revoked_at,
+      created_at,
+      last_seen_at
+    FROM sessions
+    WHERE user_id = $1
+      AND revoked_at IS NULL
+      AND expires_at > CURRENT_TIMESTAMP
+    ORDER BY created_at DESC
+  `;
+  const result = await query(sql, [userId], client);
+  return result.rows.map(mapSessionRow);
+}
+
+/**
+ * Revoke all active sessions linked to a device
+ * @param {string} deviceId - Device UUID
+ * @param {import('pg').Pool | import('pg').PoolClient} [client=pool]
+ */
+export async function revokeSessionsByDeviceId(deviceId, client = pool) {
+  if (!deviceId) throw new TypeError('Device ID is required');
+
+  const sql = `
+    UPDATE sessions
+    SET revoked_at = CURRENT_TIMESTAMP
+    WHERE device_id = $1 AND revoked_at IS NULL
+    RETURNING id
+  `;
+  const result = await query(sql, [deviceId], client);
+  return result.rowCount || result.rows.length;
+}

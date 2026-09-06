@@ -115,3 +115,34 @@ export async function updateDeviceTrustState(id, trustState, client = pool) {
   const result = await query(sql, [id, trustState], client);
   return mapDeviceRow(result.rows[0]);
 }
+
+/**
+ * Update device last seen timestamp
+ * @param {string} id - Device UUID
+ * @param {import('pg').Pool | import('pg').PoolClient} [client=pool]
+ */
+export async function touchDevice(id, client = pool) {
+  if (!id) throw new TypeError('Device ID is required');
+
+  const sql = `
+    UPDATE devices
+    SET last_seen_at = CURRENT_TIMESTAMP
+    WHERE id = $1
+    RETURNING id, last_seen_at
+  `;
+  const result = await query(sql, [id], client);
+  return result.rows.length > 0;
+}
+
+/**
+ * Delete a device record
+ * @param {string} id - Device UUID
+ * @param {import('pg').Pool | import('pg').PoolClient} [client=pool]
+ */
+export async function deleteDevice(id, client = pool) {
+  if (!id) throw new TypeError('Device ID is required');
+
+  const sql = `DELETE FROM devices WHERE id = $1 RETURNING id`;
+  const result = await query(sql, [id], client);
+  return result.rows.length > 0;
+}

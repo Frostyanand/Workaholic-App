@@ -110,3 +110,36 @@ export const createJobSchema = z.object({
   runAt: z.string().datetime().optional(),
   maxAttempts: z.number().int().positive().default(3),
 });
+
+// Auth & OAuth schemas (Phase 4)
+export const googleAuthInputSchema = z.object({
+  idToken: z.string().trim().min(10, 'Google ID token is required'),
+  device: z
+    .object({
+      platform: z.enum(['WEB', 'WINDOWS', 'ANDROID']).default('WEB'),
+      deviceName: z.string().trim().min(1).max(255).optional(),
+      applicationVersion: z.string().max(50).optional(),
+    })
+    .optional(),
+});
+
+export const oauthAuthorizeQuerySchema = z.object({
+  service: z.enum(['CALENDAR', 'TASKS', 'DRIVE']),
+  redirectUri: z.string().url().optional(),
+});
+
+export const oauthCallbackInputSchema = z.object({
+  code: z.string().trim().min(1, 'Authorization code is required'),
+  state: z.string().trim().min(1, 'State token is required'),
+  service: z.enum(['CALENDAR', 'TASKS', 'DRIVE']),
+});
+
+export const updateDeviceTrustInputSchema = z.object({
+  trustState: z.enum(['TRUSTED', 'UNTRUSTED']),
+});
+
+export const securityEventsQuerySchema = z.object({
+  limit: z.coerce.number().int().positive().max(100).default(20),
+  offset: z.coerce.number().int().nonnegative().default(0),
+  eventType: z.string().optional(),
+});

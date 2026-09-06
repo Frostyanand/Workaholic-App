@@ -2,9 +2,9 @@
 
 ## Status Overview
 
-- **Current Phase**: Phase 3 — Backend Foundation (COMPLETED & VERIFIED)
-- **Current Task**: Phase 3 Complete — Ready for Final Phase 3 Audit
-- **Overall Project Status**: Phase 0, Phase 1, Phase 2 & Phase 3 Complete
+- **Current Phase**: Phase 4 — Authentication and Identity (COMPLETED & VERIFIED)
+- **Current Task**: Phase 4 Complete — Ready for Phase 5
+- **Overall Project Status**: Phase 0, Phase 1, Phase 2, Phase 3 & Phase 4 Complete
 - **Last Updated**: 2026-09-06
 - **Architecture Invariant**: JavaScript/JSX ONLY (zero TypeScript, zero ORMs, PostgreSQL authoritative, React 18.2.0 baseline)
 
@@ -561,3 +561,133 @@ All required verification checks have passed successfully:
 - **Transaction Utilities (Task 3.5)**: Enhanced `withTransaction` supporting configurable isolation levels (`READ COMMITTED`, `REPEATABLE READ`, `SERIALIZABLE`), `readOnly` mode, re-entrant client propagation, and `withSavepoint` nested transaction boundaries verified against live PostgreSQL 16.
 - **Background Job Foundation (Task 3.6)**: Migration `1725628802000_create_background_jobs.sql`, `jobs.repository.js`, and `JobQueue` worker engine powered by PostgreSQL `SELECT ... FOR UPDATE SKIP LOCKED` with concurrency, priority queues, and retry backoff.
 - **Observability Foundation (Task 3.7)**: Structured JSON completion logging, `x-response-time` headers, and layered health/readiness endpoints (`/health`, `/health/db`, `/health/queue`, `/health/ready`).
+
+---
+
+## Phase 4: Authentication and Identity — COMPLETED & VERIFIED
+
+### Completed Tasks
+
+1. **Task 4.0 — Database Foundation for Auth & Identity**:
+   - Migration `1725628803000_create_auth_and_identity_tables.sql`:
+     - `external_identities`: Table mapping external provider subjects (e.g. Google `sub`) to internal Workaholic user UUIDs. Enforces `UNIQUE (provider, provider_subject)` and foreign key cascade to `users(id)`.
+     - `security_events`: Append-oriented audit logging table recording authentication lifecycle events (`LOGIN_SUCCESS`, `LOGIN_FAILURE`, `LOGOUT`, `SESSION_REVOKED`, `REVOKE_ALL_SESSIONS`, `DEVICE_REGISTERED`, `DEVICE_TRUST_UPDATED`, `DEVICE_REVOKED`, `GOOGLE_OAUTH_CONNECTED`, `GOOGLE_OAUTH_DISCONNECTED`) with indexed `(user_id, created_at DESC)` and `(event_type, created_at DESC)`.
+     - `integrations`: Integration state tracking table with lifecycle check constraints (`DISCONNECTED`, `AUTHORIZING`, `CONNECTED`, `ERROR`, `REAUTH_REQUIRED`).
+     - `external_accounts`: Provider account mapping storing encrypted long-lived tokens and granted scopes with `UNIQUE (provider, external_account_id)`.
+     - Reversible migration with complete `-- Down Migration` tested and applied against live PostgreSQL 16.
+
+2. **Task 4.1 — Google Authentication & Identity Verification**:
+   - `GoogleAuthService` (`apps/backend/src/modules/auth/google-auth.service.js`):
+     - Answers strictly: _"Who is this user?"_
+     - Validates OpenID Connect ID token JWT format, signature/claims, allowed Google issuers (`accounts.google.com`, `https://accounts.google.com`), clock skew expiration, configured audience, subject identifier, and verified email status.
+     - Preserves provider identity (`sub`) strictly separate from the internal Workaholic User UUID.
+     - Zero ambient Google API scopes requested or granted during authentication.
+   - `external-identities.repository.js`:
+     - Pure parameterized SQL data access mapping external accounts to internal users.
+
+3. **Task 4.2 — Google API Authorization (OAuth Scope Boundary)**:
+   - `OAuthBoundaryService` (`apps/backend/src/modules/auth/oauth-boundary.service.js`):
+     - Strict boundary separation between user identity authentication and Google API access.
+     - Granular on-demand OAuth consent flows for:
+       - `CALENDAR`: `['https://www.googleapis.com/auth/calendar.events', 'https://www.googleapis.com/auth/calendar.readonly']`
+       - `TASKS`: `['https://www.googleapis.com/auth/tasks']`
+       - `DRIVE`: `['https://www.googleapis.com/auth/drive.file']`
+     - Cryptographically secure CSRF state generation and validation (`generateOAuthState()`, 10-minute expiration, user and service mismatch protection).
+     - Sensitive credentials encrypted with AES-256-GCM (`encryptCredentials()`) before storage in `external_accounts.encrypted_credentials`.
+     - Raw tokens and decrypted credentials are never exposed via API responses or logged.
+     - User-initiated integration disconnect without terminating Workaholic user identity or sessions.
+   - `integrations.repository.js`:
+     - Pure parameterized SQL upsert, retrieval, and cascade deletion for external accounts.
+
+4. **Task 4.3 — Sessions Engine & Token Security**:
+   - Centralized cryptographic foundation (`apps/backend/src/core/crypto.js`):
+     - `generateSessionToken()`: 256-bit entropy via `crypto.randomBytes(32).toString('hex')`.
+     - `hashSessionToken()`: Deterministic SHA-256 hex digest.
+     - Raw tokens are NEVER stored in PostgreSQL; only `session_token_hash` is persisted.
+     - Partial index `idx_sessions_active_lookup` on `sessions (session_token_hash) WHERE revoked_at IS NULL`.
+   - `AuthService` (`apps/backend/src/modules/auth/auth.service.js`):
+     - `createSession`: Provisions 30-day session with hashed token and records `LOGIN_SUCCESS` audit event.
+     - `validateRawToken`: Hashes presented raw token, verifies expiry (`expires_at > CURRENT_TIMESTAMP`), revocation (`revoked_at IS NULL`), and active user status (`deleted_at IS NULL`), and updates `last_seen_at`.
+     - `logout`: Revokes active session, clears cookie, and logs `LOGOUT` event.
+     - `revokeUserSession`: Revokes specific session with verified user ownership (IDOR shielded with 404).
+     - `revokeAllUserSessions`: Simultaneously terminates all active sessions for a user.
+   - Fastify Request Pipeline Integration (`auth.middleware.js`):
+     - `extractTokenFromRequest`: Extracts session token from `Authorization: Bearer <token>` or `workaholic_session` cookie.
+     - `authenticateRequest`: Global `preHandler` hook populating `request.user` and `request.session`.
+     - `requireAuth`: Enforces authenticated identity with standardized 401 `AUTHENTICATION_REQUIRED` envelope.
+
+5. **Task 4.4 — Device Registration & Multi-Device Tracking**:
+   - `devices.repository.js` & `AuthService`:
+     - Parses device information from request body or `x-platform`, `x-device-name`, `x-app-version` headers.
+     - Tracks client devices across Web, Windows Desktop, and Android Mobile.
+     - Links `session.device_id` to the registered device.
+     - Trust state management (`UNTRUSTED`, `TRUSTED`, `REVOKED`).
+     - Remote device revocation: `revokeDeviceAndSessions` cascades revocation to all active sessions on that device and logs `DEVICE_REVOKED` audit event.
+
+6. **Task 4.5 — Security Events & Audit Logging**:
+   - `security-events.repository.js` (`apps/backend/src/modules/auth/security-events.repository.js`):
+     - Append-oriented audit logging conforming to `docs/12.PRIVACY-SECURITY.md` Section 48 & 49.
+     - Captures `LOGIN_SUCCESS`, `LOGOUT`, `SESSION_REVOKED`, `REVOKE_ALL_SESSIONS`, `DEVICE_REGISTERED`, `DEVICE_TRUST_UPDATED`, `DEVICE_REVOKED`, `GOOGLE_OAUTH_CONNECTED`, `GOOGLE_OAUTH_DISCONNECTED`.
+     - Strict sanitization: Passwords, raw tokens, ID tokens, and client secrets are automatically redacted from event metadata.
+     - Paginated audit log endpoint `GET /api/v1/auth/security-events` with tenant isolation.
+
+7. **Task 4.6 — Account Bootstrap Engine**:
+   - `AccountBootstrapService` (`apps/backend/src/modules/auth/account-bootstrap.service.js`):
+     - First-time login: Atomically provisions within `withTransaction`:
+       1. User profile in `users` (display name, email, profile image).
+       2. Default personal workspace in `workspaces` (`name: 'Personal'`, `workspace_type: 'PERSONAL'`, `owner_user_id: user.id`).
+       3. Owner membership in `workspace_memberships` (`role: 'OWNER'`, `status: 'ACTIVE'`).
+       4. External identity mapping in `external_identities` (`provider: 'GOOGLE'`, `provider_subject: sub`).
+     - Idempotent returning user resolution: Seamlessly resolves returning users without duplicate profile or workspace creation.
+     - Existing email linking: Links external provider identity to an existing active account matching the verified email.
+     - Deactivated user protection: Rejects deactivated/soft-deleted users with 401 `AUTHENTICATION_FAILED`.
+
+8. **Shared Schemas Expansion (`@workaholic/shared`)**:
+   - Added Zod schemas: `googleAuthInputSchema`, `oauthAuthorizeQuerySchema`, `oauthCallbackInputSchema`, `updateDeviceTrustInputSchema`, `securityEventsQuerySchema`.
+
+9. **HTTP Auth Routes Integration (`apps/backend/src/modules/auth/auth.routes.js`)**:
+   - `POST /api/v1/auth/google`: Google sign-in exchange returning raw session token, user profile, session details, and HttpOnly cookie.
+   - `GET /api/v1/auth/session`: Public session check endpoint.
+   - `POST /api/v1/auth/logout`: Revokes active session and clears cookie.
+   - `POST /api/v1/auth/revoke-all`: Revokes all active sessions for authenticated user.
+   - `GET /api/v1/auth/sessions`: Lists user's active sessions (omitting token hashes).
+   - `POST /api/v1/auth/sessions/:id/revoke`: Revokes specific session with IDOR protection.
+   - `GET /api/v1/auth/devices`: Lists registered devices.
+   - `PATCH /api/v1/auth/devices/:id/trust`: Updates device trust state.
+   - `DELETE /api/v1/auth/devices/:id`: Revokes device and terminates its active sessions.
+   - `GET /api/v1/auth/security-events`: Returns user-scoped audit trail with pagination.
+   - `GET /api/v1/auth/google/authorize`: Generates scoped OAuth URL (Calendar, Tasks, Drive).
+   - `POST /api/v1/auth/google/callback`: Exchanges code, stores encrypted credentials.
+   - `GET /api/v1/auth/google/status`: Returns integration status.
+   - `DELETE /api/v1/auth/google`: Disconnects Google API access.
+
+---
+
+### Verification Results
+
+All required verification checks have passed successfully:
+
+| Verification Step        | Command                                               | Result     | Notes                                           |
+| ------------------------ | ----------------------------------------------------- | ---------- | ----------------------------------------------- |
+| JavaScript-Only Guard    | `npm run check:js-only`                               | **PASSED** | 0 TypeScript files found across repository      |
+| Linter Verification      | `npm run lint`                                        | **PASSED** | 0 errors, 0 warnings across all workspaces      |
+| Code Formatting Check    | `npm run format:check`                                | **PASSED** | All matched files use Prettier code style       |
+| Test Suite (Unit & HTTP) | `npx vitest run apps/backend/tests/auth.test.js`      | **PASSED** | 31/31 auth unit and HTTP tests passed           |
+| Test Suite (Live DB)     | `npx vitest run apps/backend/tests/auth-live.test.js` | **PASSED** | 6/6 real PostgreSQL 16 integration tests passed |
+| Monorepo Test Suite      | `npm test`                                            | **PASSED** | 232/232 tests passed across 20 test files       |
+| Web Production Build     | `npm run build -w @workaholic/web`                    | **PASSED** | Production bundle generated in 1.76s            |
+| Desktop Package Scaffold | `npm run check -w @workaholic/desktop`                | **PASSED** | Electron scaffold verified                      |
+| Mobile Package Scaffold  | `npm run check -w @workaholic/mobile`                 | **PASSED** | React Native / Expo scaffold verified           |
+| Live Database Migrations | `npm run migrate:up -w @workaholic/backend`           | **PASSED** | Applied, rolled back, and reapplied on PG 16    |
+
+---
+
+### Phase 4 Summary
+
+- **Authentication & Identity**: Google OpenID Connect token verification establishes user identity without granting Google API scopes. Workaholic UUID is authoritative internally.
+- **Account Bootstrap**: First-time login provisions user profile, default personal workspace, and OWNER membership atomically in a transaction.
+- **Session Security**: 256-bit cryptographically secure randomness, SHA-256 token hashing, partial index active lookup, automatic `last_seen_at` tracking, HttpOnly cookie and Bearer transport, and explicit revocation.
+- **Device Management**: Client tracking across Web, Windows, and Android with trust state management and cascading remote device session termination.
+- **Security Audit Trail**: Append-oriented audit logging with automatic credential/token redaction.
+- **OAuth Boundary**: Separate consent flows and encrypted server-side credential storage for Google Calendar, Tasks, and Drive.
+- **Global Invariants Preserved**: Zero TypeScript, zero ORMs, PostgreSQL 16 authoritative, zero Redis/Kafka/microservices.

@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { config } from './core/config.js';
 import { formatErrorResponse } from './core/errors.js';
 import { setupRequestContext } from './core/request-context.js';
+import { authenticateRequest } from './modules/auth/auth.middleware.js';
 import { healthRoutes } from './modules/health/health.routes.js';
 import { authRoutes } from './modules/auth/auth.routes.js';
 import { usersRoutes } from './modules/users/users.routes.js';
@@ -22,6 +23,9 @@ export function createApp(opts = {}) {
 
   // Request context decorators (user, workspace, session)
   setupRequestContext(app);
+
+  // Global authentication extraction preHandler hook
+  app.addHook('preHandler', authenticateRequest);
 
   // Security headers & CORS
   app.register(helmet, { contentSecurityPolicy: false });
