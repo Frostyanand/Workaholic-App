@@ -1,0 +1,33 @@
+{
+  "name": "workaholic",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Personal productivity operating system",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "check:js-only": "node scripts/check-js-only.js",
+    "lint": "eslint .",
+    "format:check": "prettier --check .",
+    "format": "prettier --write .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "build": "npm run build --workspaces --if-present"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.9.1",
+    "eslint": "^9.9.1",
+    "eslint-plugin-react": "^7.35.0",
+    "eslint-plugin-react-hooks": "^5.1.0-rc.0",
+    "globals": "^15.9.0",
+    "jsdom": "^24.1.1",
+    "prettier": "^3.3.3",
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "react-router-dom": "^6.26.1",
+    "vitest": "^2.0.5"
+  }
+}

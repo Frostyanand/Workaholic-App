@@ -1,0 +1,23 @@
+{
+  "name": "@workaholic/backend",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "migrate:up": "node-pg-migrate up -m migrations",
+    "migrate:down": "node-pg-migrate down -m migrations",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@fastify/cors": "^9.0.1",
+    "@fastify/helmet": "^11.1.1",
+    "@workaholic/shared": "*",
+    "dotenv": "^16.4.5",
+    "fastify": "^4.28.1",
+    "node-pg-migrate": "^7.6.0",
+    "pg": "^8.12.0",
+    "zod": "^3.23.8"
+  }
+}

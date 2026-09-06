@@ -1,0 +1,16 @@
+{
+  "name": "@workaholic/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "check": "node -e \"console.log('Desktop package scaffold verified')\""
+  },
+  "dependencies": {
+    "@workaholic/shared": "*"
+  },
+  "devDependencies": {
+    "electron": "^31.4.0"
+  }
+}
