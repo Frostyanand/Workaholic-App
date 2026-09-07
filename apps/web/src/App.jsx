@@ -4,6 +4,7 @@ import { ErrorBoundary } from './components/common/ErrorBoundary.jsx';
 import { AppLayout } from './components/layout/AppLayout.jsx';
 import { AuthLayout } from './components/layout/AuthLayout.jsx';
 import { TodayPage } from './pages/TodayPage.jsx';
+import { TasksPage } from './pages/TasksPage.jsx';
 import { LoginPage } from './pages/LoginPage.jsx';
 import { NotFoundPage } from './pages/NotFoundPage.jsx';
 import { PlaceholderPage } from './pages/PlaceholderPage.jsx';
@@ -15,16 +16,7 @@ export default function App() {
         {/* Authenticated Application Shell */}
         <Route path="/" element={<AppLayout />}>
           <Route index element={<TodayPage />} />
-          <Route
-            path="tasks"
-            element={
-              <PlaceholderPage
-                title="Task Management"
-                phase="Phase 5"
-                description="Hierarchical tasks, subtasks, priority scheduling, and dependencies."
-              />
-            }
-          />
+          <Route path="tasks" element={<TasksPage />} />
           <Route
             path="boards"
             element={

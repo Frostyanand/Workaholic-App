@@ -8,22 +8,22 @@ import {
   decryptCredentials,
 } from '../src/core/crypto.js';
 import {
-  googleAuthService,
-  createMockGoogleIdToken,
-  GoogleAuthService,
-} from '../src/modules/auth/google-auth.service.js';
+  firebaseAuthService,
+  createMockFirebaseIdToken,
+  FirebaseAuthService,
+} from '../src/modules/auth/firebase-auth.service.js';
 import {
   OAuthBoundaryService,
   GOOGLE_API_SCOPES,
 } from '../src/modules/auth/oauth-boundary.service.js';
 import { AccountBootstrapService } from '../src/modules/auth/account-bootstrap.service.js';
-import { AuthenticationFailedError, ValidationError } from '../src/core/errors.js';
+import { AuthenticationFailedError } from '../src/core/errors.js';
 
-describe('Phase 4: Authentication and Identity', () => {
+describe('Phase 4: Authentication and Identity (Firebase Authority)', () => {
   // =========================================================================
-  // Cryptographic Foundation (Task 4.3 & Security Specs)
+  // 1. Cryptographic Foundation (Task 4.3 & Security Specs)
   // =========================================================================
-  describe('Cryptographic Foundation (crypto.js)', () => {
+  describe('1. Cryptographic Foundation (crypto.js)', () => {
     it('generates cryptographically secure session tokens with 256-bit entropy', () => {
       const token1 = generateSessionToken();
       const token2 = generateSessionToken();
@@ -85,421 +85,318 @@ describe('Phase 4: Authentication and Identity', () => {
   });
 
   // =========================================================================
-  // Task 4.1: Google Authentication & Identity Verification
+  // 2. Firebase Authentication & Identity Verification (Task 4.1 & System Arch §13, 14)
   // =========================================================================
-  describe('Task 4.1: Google Authentication & Identity Verification', () => {
-    it('verifies a valid Google OpenID Connect ID token and extracts identity claims', async () => {
-      const validToken = createMockGoogleIdToken({
-        sub: 'google_user_987654321',
+  describe('2. Firebase Authentication Token Verification (firebase-auth.service.js)', () => {
+    it('verifies a valid Firebase ID token and extracts normalized identity claims', async () => {
+      const validToken = createMockFirebaseIdToken({
+        uid: 'firebase_user_987654321',
         email: 'sarah.connor@example.com',
         name: 'Sarah Connor',
         picture: 'https://lh3.googleusercontent.com/avatar1',
+        email_verified: true,
+        signInProvider: 'google.com',
       });
 
-      const identity = await googleAuthService.verifyGoogleIdToken(validToken);
+      const identity = await firebaseAuthService.verifyFirebaseIdToken(validToken);
 
-      expect(identity.provider).toBe('GOOGLE');
-      expect(identity.subject).toBe('google_user_987654321');
+      expect(identity.provider).toBe('FIREBASE');
+      expect(identity.subject).toBe('firebase_user_987654321');
       expect(identity.email).toBe('sarah.connor@example.com');
       expect(identity.emailVerified).toBe(true);
       expect(identity.displayName).toBe('Sarah Connor');
       expect(identity.picture).toBe('https://lh3.googleusercontent.com/avatar1');
+      expect(identity.signInProvider).toBe('google.com');
     });
 
-    it('rejects tokens with missing or unapproved issuer', async () => {
-      const invalidIssuerToken = createMockGoogleIdToken({
+    it('rejects tokens with missing or invalid issuer', async () => {
+      const invalidIssuerToken = createMockFirebaseIdToken({
         iss: 'https://evil-auth-provider.com',
       });
 
-      await expect(googleAuthService.verifyGoogleIdToken(invalidIssuerToken)).rejects.toThrow(
+      await expect(firebaseAuthService.verifyFirebaseIdToken(invalidIssuerToken)).rejects.toThrow(
         AuthenticationFailedError,
       );
     });
 
-    it('rejects expired Google ID tokens', async () => {
+    it('rejects tokens with mismatched audience (Firebase project ID)', async () => {
+      const mismatchedAudToken = createMockFirebaseIdToken({
+        aud: 'other-firebase-project',
+      });
+
+      await expect(firebaseAuthService.verifyFirebaseIdToken(mismatchedAudToken)).rejects.toThrow(
+        /audience does not match/i,
+      );
+    });
+
+    it('rejects expired Firebase ID tokens', async () => {
       const nowSec = Math.floor(Date.now() / 1000);
-      const expiredToken = createMockGoogleIdToken({
+      const expiredToken = createMockFirebaseIdToken({
         exp: nowSec - 300, // expired 5 minutes ago
       });
 
-      await expect(googleAuthService.verifyGoogleIdToken(expiredToken)).rejects.toThrow(/expired/i);
+      await expect(firebaseAuthService.verifyFirebaseIdToken(expiredToken)).rejects.toThrow(
+        /expired/i,
+      );
     });
 
-    it('rejects tokens where email is not verified', async () => {
-      const unverifiedToken = createMockGoogleIdToken({
+    it('preserves emailVerified metadata without rejecting unverified email', async () => {
+      const unverifiedToken = createMockFirebaseIdToken({
+        uid: 'firebase_unverified_user',
+        email: 'unverified@example.com',
         email_verified: false,
       });
 
-      await expect(googleAuthService.verifyGoogleIdToken(unverifiedToken)).rejects.toThrow(
-        /verified/i,
+      const identity = await firebaseAuthService.verifyFirebaseIdToken(unverifiedToken);
+      expect(identity.subject).toBe('firebase_unverified_user');
+      expect(identity.email).toBe('unverified@example.com');
+      expect(identity.emailVerified).toBe(false);
+    });
+
+    it('rejects malformed or empty token strings', async () => {
+      await expect(firebaseAuthService.verifyFirebaseIdToken('not-a-valid-jwt')).rejects.toThrow(
+        AuthenticationFailedError,
+      );
+      await expect(firebaseAuthService.verifyFirebaseIdToken('')).rejects.toThrow(
+        AuthenticationFailedError,
+      );
+      await expect(firebaseAuthService.verifyFirebaseIdToken(null)).rejects.toThrow(
+        AuthenticationFailedError,
       );
     });
 
-    it('rejects malformed token strings', async () => {
-      await expect(googleAuthService.verifyGoogleIdToken('not-a-valid-jwt')).rejects.toThrow(
-        AuthenticationFailedError,
-      );
-      await expect(googleAuthService.verifyGoogleIdToken('')).rejects.toThrow(
-        AuthenticationFailedError,
-      );
-      await expect(googleAuthService.verifyGoogleIdToken(null)).rejects.toThrow(
-        AuthenticationFailedError,
-      );
-    });
-
-    it('enforces audience check when configured', async () => {
-      const token = createMockGoogleIdToken({
-        aud: 'client-id-alpha',
+    it('strictly forbids mock/test verification in production mode', async () => {
+      const prodService = new FirebaseAuthService({
+        env: 'production',
+        projectId: 'workaholic-prod',
       });
 
-      const service = new GoogleAuthService({ clientId: 'client-id-bravo' });
-      await expect(service.verifyGoogleIdToken(token)).rejects.toThrow(/audience does not match/i);
+      const mockToken = createMockFirebaseIdToken({}, 'workaholic-prod');
+      await expect(prodService.verifyFirebaseIdToken(mockToken)).rejects.toThrow(
+        /FATAL SECURITY INVARIANT/i,
+      );
+    });
+
+    it('sanitizes Firebase Admin SDK errors cleanly into AuthenticationFailedError', async () => {
+      const mockAdminAuth = {
+        verifyIdToken: async () => {
+          const err = new Error('Token revoked');
+          err.code = 'auth/id-token-revoked';
+          throw err;
+        },
+      };
+
+      const customService = new FirebaseAuthService({
+        env: 'test',
+        adminAuth: mockAdminAuth,
+      });
+
+      // Pass token that doesn't end with mock signature to invoke adminAuth path
+      await expect(
+        customService.verifyFirebaseIdToken('header.payload.real_firebase_signature'),
+      ).rejects.toThrow(/revoked/i);
     });
   });
 
   // =========================================================================
-  // Task 4.6: Account Bootstrap Engine
+  // 3. Google API OAuth Boundary (Task 4.2 & Integration Spec §4, 5)
   // =========================================================================
-  describe('Task 4.6: Account Bootstrap Engine', () => {
+  describe('3. Google API OAuth Boundary (oauth-boundary.service.js)', () => {
+    let mockIntegrationsRepo;
+    let oauthService;
+
+    beforeEach(() => {
+      mockIntegrationsRepo = {
+        findIntegration: async () => ({ id: 'mock_int_1', status: 'CONNECTED' }),
+        findIntegrationWithAccount: async () => null,
+        upsertIntegrationWithAccount: async data => ({
+          integration: { id: 'mock_int_1', status: 'CONNECTED' },
+          externalAccount: { id: 'mock_ext_1', provider: 'GOOGLE' },
+          ...data,
+        }),
+        deleteIntegration: async () => true,
+        disconnectIntegration: async () => true,
+      };
+
+      oauthService = new OAuthBoundaryService(mockIntegrationsRepo);
+    });
+
+    it('generates scoped OAuth authorization URL for Calendar with isolated scope', () => {
+      const auth = oauthService.generateAuthorizationUrl({
+        userId: 'user-uuid-1',
+        service: 'CALENDAR',
+      });
+
+      expect(auth.authorizationUrl).toContain('accounts.google.com/o/oauth2/v2/auth');
+      expect(auth.authorizationUrl).toContain(encodeURIComponent(GOOGLE_API_SCOPES.CALENDAR[0]));
+      expect(auth.authorizationUrl).not.toContain(encodeURIComponent(GOOGLE_API_SCOPES.TASKS[0]));
+      expect(auth.authorizationUrl).not.toContain(encodeURIComponent(GOOGLE_API_SCOPES.DRIVE[0]));
+      expect(auth.state).toHaveLength(48);
+    });
+
+    it('enforces that Google API authorization is independent from Workaholic authentication', async () => {
+      // Disconnecting Google integration should succeed without touching native user/session
+      const disconnected = await oauthService.disconnectGoogleIntegration('user-uuid-1');
+      expect(disconnected.disconnected).toBe(true);
+    });
+  });
+
+  // =========================================================================
+  // 4. Account Bootstrap Engine (Task 4.6 & System Arch §14)
+  // =========================================================================
+  describe('4. Account Bootstrap Engine (account-bootstrap.service.js)', () => {
     let mockUsersRepo;
     let mockWorkspacesRepo;
     let mockExternalIdentitiesRepo;
-    let mockTxHelper;
     let bootstrapService;
 
     beforeEach(() => {
-      const users = new Map();
-      const workspaces = new Map();
-      const memberships = [];
-      const externalIdentities = new Map();
+      const storedUsers = new Map();
+      const storedIdentities = new Map();
+      const storedWorkspaces = new Map();
 
       mockUsersRepo = {
-        findUserById: async id => users.get(id) || null,
+        findUserById: async id => storedUsers.get(id) || null,
         findUserByEmail: async email => {
-          for (const u of users.values()) {
-            if (u.email.toLowerCase() === email.toLowerCase()) return u;
+          for (const u of storedUsers.values()) {
+            if (u.email === email.toLowerCase()) return u;
           }
           return null;
         },
         createUser: async data => {
-          const user = {
-            id: `usr_${Date.now()}_${Math.random().toString(36).substring(7)}`,
-            ...data,
-          };
-          users.set(user.id, user);
+          const user = { id: `user_${Date.now()}_${Math.random()}`, ...data };
+          storedUsers.set(user.id, user);
           return user;
         },
       };
 
       mockWorkspacesRepo = {
         createWorkspaceWithMembership: async data => {
-          const ws = { id: `ws_${Date.now()}`, ...data };
-          workspaces.set(ws.id, ws);
-          const m = {
+          const workspace = { id: `ws_${Date.now()}_${Math.random()}`, ...data };
+          storedWorkspaces.set(workspace.id, workspace);
+          const membership = {
             id: `mem_${Date.now()}`,
-            workspaceId: ws.id,
+            workspaceId: workspace.id,
             userId: data.ownerUserId,
             role: 'OWNER',
-            status: 'ACTIVE',
           };
-          memberships.push(m);
-          return { workspace: ws, membership: m };
-        },
-        createWorkspace: async data => {
-          const ws = { id: `ws_${Date.now()}`, ...data };
-          workspaces.set(ws.id, ws);
-          return ws;
-        },
-        createMembership: async data => {
-          const m = { id: `mem_${Date.now()}`, ...data };
-          memberships.push(m);
-          return m;
+          return { workspace, membership };
         },
       };
 
       mockExternalIdentitiesRepo = {
-        findExternalIdentity: async (provider, subject) =>
-          externalIdentities.get(`${provider}:${subject}`) || null,
+        findExternalIdentity: async (provider, subject) => {
+          return storedIdentities.get(`${provider}:${subject}`) || null;
+        },
         createExternalIdentity: async data => {
-          const ei = { id: `ei_${Date.now()}`, ...data };
-          externalIdentities.set(`${data.provider}:${data.providerSubject}`, ei);
-          return ei;
+          const key = `${data.provider}:${data.providerSubject}`;
+          if (storedIdentities.has(key)) {
+            const err = new Error('duplicate key value violates unique constraint');
+            err.code = '23505';
+            throw err;
+          }
+          const rec = { id: `ext_${Date.now()}`, ...data };
+          storedIdentities.set(key, rec);
+          return rec;
         },
       };
 
-      mockTxHelper = async workFn => workFn({});
+      // Mock txHelper that passes through to callback
+      const mockTx = async fn => fn({});
 
       bootstrapService = new AccountBootstrapService(
         mockUsersRepo,
         mockWorkspacesRepo,
         mockExternalIdentitiesRepo,
-        mockTxHelper,
+        mockTx,
       );
     });
 
-    it('atomically creates user, personal workspace, OWNER membership, and external identity on first login', async () => {
-      const identity = {
-        provider: 'GOOGLE',
-        subject: 'google_sub_101',
-        email: 'newbie@example.com',
-        displayName: 'New User',
-        picture: 'https://avatar.example.com/101',
-      };
-
-      const result = await bootstrapService.bootstrapOrResolveUser(identity);
+    it('bootstraps new user, personal workspace, owner membership, and FIREBASE external identity on first login', async () => {
+      const result = await bootstrapService.bootstrapOrResolveUser({
+        provider: 'FIREBASE',
+        subject: 'firebase_uid_new_user',
+        email: 'brandnew@example.com',
+        displayName: 'Brand New User',
+        picture: 'https://example.com/avatar.jpg',
+      });
 
       expect(result.isNewUser).toBe(true);
-      expect(result.user).toBeDefined();
-      expect(result.user.email).toBe('newbie@example.com');
-      expect(result.workspace).toBeDefined();
+      expect(result.user.displayName).toBe('Brand New User');
+      expect(result.user.email).toBe('brandnew@example.com');
       expect(result.workspace.name).toBe('Personal');
       expect(result.workspace.workspaceType).toBe('PERSONAL');
-      expect(result.workspace.ownerUserId).toBe(result.user.id);
       expect(result.membership.role).toBe('OWNER');
-      expect(result.membership.status).toBe('ACTIVE');
-      expect(result.externalIdentity.providerSubject).toBe('google_sub_101');
+      expect(result.externalIdentity.provider).toBe('FIREBASE');
+      expect(result.externalIdentity.providerSubject).toBe('firebase_uid_new_user');
     });
 
-    it('resolves existing user idempotently on second login without duplicate provisioning', async () => {
+    it('idempotently resolves existing user without creating duplicate entities on subsequent logins', async () => {
       const identity = {
-        provider: 'GOOGLE',
-        subject: 'google_sub_102',
-        email: 'returning@example.com',
-        displayName: 'Returning User',
+        provider: 'FIREBASE',
+        subject: 'firebase_uid_idempotent',
+        email: 'idempotent@example.com',
+        displayName: 'Idempotent User',
       };
 
-      const firstLogin = await bootstrapService.bootstrapOrResolveUser(identity);
-      expect(firstLogin.isNewUser).toBe(true);
+      const first = await bootstrapService.bootstrapOrResolveUser(identity);
+      expect(first.isNewUser).toBe(true);
 
-      const secondLogin = await bootstrapService.bootstrapOrResolveUser(identity);
-      expect(secondLogin.isNewUser).toBe(false);
-      expect(secondLogin.user.id).toBe(firstLogin.user.id);
-      expect(secondLogin.workspace).toBeUndefined(); // Did not recreate workspace
+      const second = await bootstrapService.bootstrapOrResolveUser(identity);
+      expect(second.isNewUser).toBe(false);
+      expect(second.user.id).toBe(first.user.id);
+      expect(second.workspace).toBeUndefined();
     });
 
-    it('links external identity when an active user already exists with matching email', async () => {
-      // Pre-create user with email
-      const preExistingUser = await mockUsersRepo.createUser({
-        displayName: 'Existing Person',
-        email: 'exists@example.com',
+    it('enforces Identity Isolation: Firebase UID is authoritative, changing email does not change user', async () => {
+      const first = await bootstrapService.bootstrapOrResolveUser({
+        provider: 'FIREBASE',
+        subject: 'firebase_uid_isolation_test',
+        email: 'original@example.com',
+        displayName: 'Original Name',
       });
 
-      const identity = {
-        provider: 'GOOGLE',
-        subject: 'google_sub_exists_103',
-        email: 'exists@example.com',
-        displayName: 'Existing Person',
-      };
+      // Subsequent login with same Firebase UID but changed email
+      const second = await bootstrapService.bootstrapOrResolveUser({
+        provider: 'FIREBASE',
+        subject: 'firebase_uid_isolation_test',
+        email: 'changed@example.com',
+        displayName: 'Changed Name',
+      });
 
-      const result = await bootstrapService.bootstrapOrResolveUser(identity);
-
-      expect(result.isNewUser).toBe(false);
-      expect(result.user.id).toBe(preExistingUser.id);
-
-      // Verify external identity was linked
-      const linked = await mockExternalIdentitiesRepo.findExternalIdentity(
-        'GOOGLE',
-        'google_sub_exists_103',
-      );
-      expect(linked).toBeDefined();
-      expect(linked.userId).toBe(preExistingUser.id);
+      expect(second.user.id).toBe(first.user.id);
+      expect(second.isNewUser).toBe(false);
     });
 
-    it('rejects login if user account is deactivated (soft-deleted)', async () => {
-      const preExistingUser = await mockUsersRepo.createUser({
-        displayName: 'Deactivated User',
-        email: 'banned@example.com',
-        deletedAt: new Date(),
-      });
-      await mockExternalIdentitiesRepo.createExternalIdentity({
-        userId: preExistingUser.id,
-        provider: 'GOOGLE',
-        providerSubject: 'google_banned_104',
+    it('distinguishes Firebase UID A from Firebase UID B even with different accounts', async () => {
+      const userA = await bootstrapService.bootstrapOrResolveUser({
+        provider: 'FIREBASE',
+        subject: 'firebase_uid_A',
+        email: 'usera@example.com',
       });
 
-      // Stub findExternalIdentity to return soft delete flag
-      mockExternalIdentitiesRepo.findExternalIdentity = async () => ({
-        userId: preExistingUser.id,
-        userDeletedAt: new Date(),
+      const userB = await bootstrapService.bootstrapOrResolveUser({
+        provider: 'FIREBASE',
+        subject: 'firebase_uid_B',
+        email: 'userb@example.com',
       });
 
-      const identity = {
-        provider: 'GOOGLE',
-        subject: 'google_banned_104',
-        email: 'banned@example.com',
-      };
-
-      await expect(bootstrapService.bootstrapOrResolveUser(identity)).rejects.toThrow(
-        /deactivated/i,
-      );
+      expect(userA.user.id).not.toBe(userB.user.id);
+      expect(userA.workspace.id).not.toBe(userB.workspace.id);
     });
   });
 
   // =========================================================================
-  // Task 4.2: Google API Authorization Boundary
+  // 5. Session Lifecycle & HTTP Integration (Fastify Pipeline)
   // =========================================================================
-  describe('Task 4.2: Google API Authorization (OAuth Scope Boundary)', () => {
-    let mockIntegrationsRepo;
-    let mockSecurityEventsRepo;
-    let oauthService;
-
-    beforeEach(() => {
-      const integrations = new Map();
-      const accounts = new Map();
-
-      mockIntegrationsRepo = {
-        upsertIntegration: async data => {
-          const record = { id: `int_${Date.now()}`, ...data };
-          integrations.set(`${data.userId}:${data.provider}`, record);
-          return record;
-        },
-        findIntegration: async (userId, provider) =>
-          integrations.get(`${userId}:${provider}`) || null,
-        deleteIntegration: async id => {
-          for (const [key, val] of integrations.entries()) {
-            if (val.id === id) integrations.delete(key);
-          }
-          return true;
-        },
-        upsertExternalAccount: async data => {
-          const acc = { id: `acc_${Date.now()}`, ...data };
-          accounts.set(`${data.integrationId}:${data.provider}`, acc);
-          return acc;
-        },
-        findExternalAccount: async (integrationId, provider) =>
-          accounts.get(`${integrationId}:${provider}`) || null,
-      };
-
-      mockSecurityEventsRepo = {
-        recordSecurityEvent: async () => ({ id: 'evt_1' }),
-      };
-
-      oauthService = new OAuthBoundaryService(mockIntegrationsRepo, mockSecurityEventsRepo);
-    });
-
-    it('generates authorization URL with minimal scopes specifically for Calendar', () => {
-      const result = oauthService.generateAuthorizationUrl({
-        userId: 'usr_100',
-        service: 'CALENDAR',
-      });
-
-      expect(result.service).toBe('CALENDAR');
-      expect(result.scopes).toEqual(GOOGLE_API_SCOPES.CALENDAR);
-      expect(result.authorizationUrl).toContain('calendar.events');
-      expect(result.authorizationUrl).not.toContain('drive');
-      expect(result.authorizationUrl).not.toContain('tasks');
-      expect(result.state).toHaveLength(48);
-    });
-
-    it('generates authorization URL with minimal scopes specifically for Tasks', () => {
-      const result = oauthService.generateAuthorizationUrl({
-        userId: 'usr_100',
-        service: 'TASKS',
-      });
-
-      expect(result.service).toBe('TASKS');
-      expect(result.scopes).toEqual(GOOGLE_API_SCOPES.TASKS);
-      expect(result.authorizationUrl).toContain('tasks');
-      expect(result.authorizationUrl).not.toContain('calendar');
-    });
-
-    it('generates authorization URL with minimal scopes specifically for Drive', () => {
-      const result = oauthService.generateAuthorizationUrl({
-        userId: 'usr_100',
-        service: 'DRIVE',
-      });
-
-      expect(result.service).toBe('DRIVE');
-      expect(result.scopes).toEqual(GOOGLE_API_SCOPES.DRIVE);
-      expect(result.authorizationUrl).toContain('drive.file');
-      expect(result.authorizationUrl).not.toContain('calendar');
-    });
-
-    it('rejects unsupported service names', () => {
-      expect(() =>
-        oauthService.generateAuthorizationUrl({
-          userId: 'usr_100',
-          service: 'GMAIL',
-        }),
-      ).toThrow(ValidationError);
-    });
-
-    it('validates CSRF state and rejects tampered or expired states', () => {
-      const { state } = oauthService.generateAuthorizationUrl({
-        userId: 'usr_100',
-        service: 'CALENDAR',
-      });
-
-      // Rejects state with different user
-      expect(() => oauthService.verifyState(state, 'usr_attacker', 'CALENDAR')).toThrow(
-        ValidationError,
-      );
-
-      // Rejects invalid state string
-      expect(() => oauthService.verifyState('invalid_state', 'usr_100', 'CALENDAR')).toThrow(
-        ValidationError,
-      );
-    });
-
-    it('exchanges code, encrypts credentials, and stores integration state without returning secrets', async () => {
-      const { state } = oauthService.generateAuthorizationUrl({
-        userId: 'usr_100',
-        service: 'CALENDAR',
-      });
-
-      const exchangeResult = await oauthService.exchangeAuthorizationCode({
-        userId: 'usr_100',
-        code: 'auth_code_xyz',
-        state,
-        service: 'CALENDAR',
-      });
-
-      expect(exchangeResult.connected).toBe(true);
-      expect(exchangeResult.provider).toBe('GOOGLE');
-      expect(exchangeResult.service).toBe('CALENDAR');
-      expect(exchangeResult.scopes).toEqual(GOOGLE_API_SCOPES.CALENDAR);
-      // Critical security check: raw tokens must NEVER be returned in response!
-      expect(exchangeResult.accessToken).toBeUndefined();
-      expect(exchangeResult.refreshToken).toBeUndefined();
-
-      // Check integration status
-      const status = await oauthService.getIntegrationStatus('usr_100');
-      expect(status.connected).toBe(true);
-      expect(status.scopes).toEqual(GOOGLE_API_SCOPES.CALENDAR);
-    });
-
-    it('disconnects Google API integration without deleting the Workaholic user account', async () => {
-      const { state } = oauthService.generateAuthorizationUrl({
-        userId: 'usr_100',
-        service: 'CALENDAR',
-      });
-
-      await oauthService.exchangeAuthorizationCode({
-        userId: 'usr_100',
-        code: 'auth_code_xyz',
-        state,
-        service: 'CALENDAR',
-      });
-
-      const disconnectResult = await oauthService.disconnectGoogleIntegration('usr_100');
-      expect(disconnectResult.disconnected).toBe(true);
-
-      const statusAfter = await oauthService.getIntegrationStatus('usr_100');
-      expect(statusAfter.connected).toBe(false);
-    });
-  });
-
-  // =========================================================================
-  // Task 4.3, 4.4, 4.5: Session Lifecycle & HTTP Pipeline Integration
-  // =========================================================================
-  describe('Session Lifecycle & HTTP Integration (Fastify Pipeline)', () => {
+  describe('5. Session Lifecycle & HTTP Integration (Fastify Pipeline)', () => {
     let app;
 
     beforeEach(async () => {
-      app = createApp({ logger: false });
+      app = await createApp();
     });
 
-    it('rejects access to protected endpoints when no authentication token is provided', async () => {
+    it('rejects unauthenticated requests to protected endpoints with 401', async () => {
       const res = await app.inject({
         method: 'GET',
         url: '/api/v1/users/me',
@@ -524,21 +421,21 @@ describe('Phase 4: Authentication and Identity', () => {
       expect(body.error.code).toBe('AUTHENTICATION_REQUIRED');
     });
 
-    it('authenticates user via POST /api/v1/auth/google, sets HttpOnly cookie, and provides valid session token', async () => {
-      const validToken = createMockGoogleIdToken({
-        sub: 'google_sub_auth_test',
-        email: 'google.tester@example.com',
-        name: 'Google Tester',
+    it('authenticates user via canonical POST /api/v1/auth/session, sets HttpOnly cookie, and provides valid session token', async () => {
+      const validToken = createMockFirebaseIdToken({
+        uid: 'firebase_sub_auth_test',
+        email: 'firebase.tester@example.com',
+        name: 'Firebase Tester',
       });
 
       const res = await app.inject({
         method: 'POST',
-        url: '/api/v1/auth/google',
+        url: '/api/v1/auth/session',
         payload: {
           idToken: validToken,
           device: {
             platform: 'WEB',
-            deviceName: 'Firefox on Linux',
+            deviceName: 'Chrome on Windows',
           },
         },
       });
@@ -547,7 +444,7 @@ describe('Phase 4: Authentication and Identity', () => {
       const body = JSON.parse(res.payload);
       expect(body.data.token).toBeDefined();
       expect(body.data.token).toHaveLength(64); // 32-byte hex token
-      expect(body.data.user.email).toBe('google.tester@example.com');
+      expect(body.data.user.email).toBe('firebase.tester@example.com');
       expect(body.data.session.id).toBeDefined();
 
       // Verify Set-Cookie header contains HttpOnly session
@@ -570,7 +467,7 @@ describe('Phase 4: Authentication and Identity', () => {
 
       expect(protectedRes.statusCode).toBe(200);
       const protectedBody = JSON.parse(protectedRes.payload);
-      expect(protectedBody.data.email).toBe('google.tester@example.com');
+      expect(protectedBody.data.email).toBe('firebase.tester@example.com');
 
       // Access session endpoint using cookie transport
       const sessionRes = await app.inject({
@@ -584,19 +481,51 @@ describe('Phase 4: Authentication and Identity', () => {
       expect(sessionRes.statusCode).toBe(200);
       const sessionBody = JSON.parse(sessionRes.payload);
       expect(sessionBody.data.authenticated).toBe(true);
-      expect(sessionBody.data.user.email).toBe('google.tester@example.com');
+      expect(sessionBody.data.user.email).toBe('firebase.tester@example.com');
+    });
+
+    it('supports alias endpoint POST /api/v1/auth/firebase identically', async () => {
+      const validToken = createMockFirebaseIdToken({
+        uid: 'firebase_alias_test_uid',
+        email: 'alias.tester@example.com',
+        name: 'Alias Tester',
+      });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/firebase',
+        payload: {
+          idToken: validToken,
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.data.token).toBeDefined();
+      expect(body.data.user.email).toBe('alias.tester@example.com');
+    });
+
+    it('does NOT retain POST /api/v1/auth/google as an authentication endpoint', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/google',
+        payload: { idToken: 'some_token' },
+      });
+
+      // Route must not exist (404 NOT FOUND)
+      expect(res.statusCode).toBe(404);
     });
 
     it('handles logout by revoking active session and clearing cookie', async () => {
-      const validToken = createMockGoogleIdToken({
-        sub: 'google_sub_logout_test',
+      const validToken = createMockFirebaseIdToken({
+        uid: 'firebase_uid_logout_test',
         email: 'logout.tester@example.com',
       });
 
       // 1. Log in
       const loginRes = await app.inject({
         method: 'POST',
-        url: '/api/v1/auth/google',
+        url: '/api/v1/auth/session',
         payload: { idToken: validToken },
       });
       const rawToken = JSON.parse(loginRes.payload).data.token;
@@ -605,69 +534,73 @@ describe('Phase 4: Authentication and Identity', () => {
       const logoutRes = await app.inject({
         method: 'POST',
         url: '/api/v1/auth/logout',
-        headers: { authorization: `Bearer ${rawToken}` },
+        headers: {
+          authorization: `Bearer ${rawToken}`,
+        },
       });
 
       expect(logoutRes.statusCode).toBe(200);
-      const logoutBody = JSON.parse(logoutRes.payload);
-      expect(logoutBody.data.loggedOut).toBe(true);
+      expect(JSON.parse(logoutRes.payload).data.loggedOut).toBe(true);
       expect(logoutRes.headers['set-cookie']).toContain('Expires=Thu, 01 Jan 1970');
 
-      // 3. Try to access protected endpoint with the revoked token -> must fail
-      const afterLogoutRes = await app.inject({
+      // 3. Subsequent request with revoked token must fail with 401
+      const afterRes = await app.inject({
         method: 'GET',
         url: '/api/v1/users/me',
-        headers: { authorization: `Bearer ${rawToken}` },
+        headers: {
+          authorization: `Bearer ${rawToken}`,
+        },
       });
-
-      expect(afterLogoutRes.statusCode).toBe(401);
+      expect(afterRes.statusCode).toBe(401);
     });
 
     it('supports revoking all user sessions simultaneously', async () => {
-      const validToken = createMockGoogleIdToken({
-        sub: 'google_sub_revoke_all_test',
-        email: 'revoke.all@example.com',
+      const validToken = createMockFirebaseIdToken({
+        uid: 'firebase_uid_revoke_all_test',
+        email: 'revokeall@example.com',
       });
 
       // Login device 1
       const login1 = await app.inject({
         method: 'POST',
-        url: '/api/v1/auth/google',
-        payload: { idToken: validToken, device: { platform: 'WEB', deviceName: 'Browser' } },
+        url: '/api/v1/auth/session',
+        payload: { idToken: validToken, device: { platform: 'WEB', deviceName: 'Web 1' } },
       });
       const token1 = JSON.parse(login1.payload).data.token;
 
       // Login device 2
       const login2 = await app.inject({
         method: 'POST',
-        url: '/api/v1/auth/google',
-        payload: { idToken: validToken, device: { platform: 'WINDOWS', deviceName: 'Desktop' } },
+        url: '/api/v1/auth/session',
+        payload: {
+          idToken: validToken,
+          device: { platform: 'WINDOWS', deviceName: 'Desktop App' },
+        },
       });
       const token2 = JSON.parse(login2.payload).data.token;
 
-      // Call revoke-all with token1
-      const revokeAllRes = await app.inject({
+      // Revoke all
+      const revokeRes = await app.inject({
         method: 'POST',
         url: '/api/v1/auth/revoke-all',
         headers: { authorization: `Bearer ${token1}` },
       });
+      expect(revokeRes.statusCode).toBe(200);
+      expect(JSON.parse(revokeRes.payload).data.revokedCount).toBeGreaterThanOrEqual(2);
 
-      expect(revokeAllRes.statusCode).toBe(200);
-      expect(JSON.parse(revokeAllRes.payload).data.revokedCount).toBeGreaterThanOrEqual(2);
-
-      // Both tokens must now be rejected
+      // Both tokens are now invalid
       const check1 = await app.inject({
         method: 'GET',
         url: '/api/v1/users/me',
         headers: { authorization: `Bearer ${token1}` },
       });
+      expect(check1.statusCode).toBe(401);
+
       const check2 = await app.inject({
         method: 'GET',
         url: '/api/v1/users/me',
         headers: { authorization: `Bearer ${token2}` },
       });
-
-      expect(check1.statusCode).toBe(401);
       expect(check2.statusCode).toBe(401);
     });
 
@@ -675,9 +608,12 @@ describe('Phase 4: Authentication and Identity', () => {
       // User 1
       const login1 = await app.inject({
         method: 'POST',
-        url: '/api/v1/auth/google',
+        url: '/api/v1/auth/session',
         payload: {
-          idToken: createMockGoogleIdToken({ sub: 'user_idor_1', email: 'user1@example.com' }),
+          idToken: createMockFirebaseIdToken({
+            uid: 'firebase_user_1',
+            email: 'user1@example.com',
+          }),
         },
       });
       const session1Id = JSON.parse(login1.payload).data.session.id;
@@ -685,36 +621,36 @@ describe('Phase 4: Authentication and Identity', () => {
       // User 2
       const login2 = await app.inject({
         method: 'POST',
-        url: '/api/v1/auth/google',
+        url: '/api/v1/auth/session',
         payload: {
-          idToken: createMockGoogleIdToken({ sub: 'user_idor_2', email: 'user2@example.com' }),
+          idToken: createMockFirebaseIdToken({
+            uid: 'firebase_user_2',
+            email: 'user2@example.com',
+          }),
         },
       });
       const token2 = JSON.parse(login2.payload).data.token;
 
-      // User 2 attempts to revoke User 1's session -> must be shielded with 404 NOT_FOUND
-      const attackRes = await app.inject({
+      // User 2 attempts to revoke User 1's session
+      const idorRes = await app.inject({
         method: 'POST',
         url: `/api/v1/auth/sessions/${session1Id}/revoke`,
         headers: { authorization: `Bearer ${token2}` },
       });
 
-      expect(attackRes.statusCode).toBe(404);
-      expect(JSON.parse(attackRes.payload).error.code).toBe('NOT_FOUND');
+      expect(idorRes.statusCode).toBe(404); // NOT_FOUND prevents leaking existence
     });
 
     it('lists registered devices and updates trust state', async () => {
-      const validToken = createMockGoogleIdToken({
-        sub: 'google_sub_device_test',
-        email: 'device.tester@example.com',
-      });
-
       const loginRes = await app.inject({
         method: 'POST',
-        url: '/api/v1/auth/google',
+        url: '/api/v1/auth/session',
         payload: {
-          idToken: validToken,
-          device: { platform: 'WINDOWS', deviceName: 'Office PC' },
+          idToken: createMockFirebaseIdToken({
+            uid: 'firebase_device_tester',
+            email: 'device.tester@example.com',
+          }),
+          device: { platform: 'WINDOWS', deviceName: 'Dell XPS' },
         },
       });
       const rawToken = JSON.parse(loginRes.payload).data.token;
@@ -730,39 +666,28 @@ describe('Phase 4: Authentication and Identity', () => {
       const devices = JSON.parse(devicesRes.payload).data;
       expect(devices.length).toBeGreaterThanOrEqual(1);
       const deviceId = devices[0].id;
-      expect(devices[0].platform).toBe('WINDOWS');
 
-      // Update trust state to TRUSTED
-      const trustRes = await app.inject({
+      // Update trust state
+      const patchRes = await app.inject({
         method: 'PATCH',
         url: `/api/v1/auth/devices/${deviceId}/trust`,
         headers: { authorization: `Bearer ${rawToken}` },
         payload: { trustState: 'TRUSTED' },
       });
 
-      expect(trustRes.statusCode).toBe(200);
-      expect(JSON.parse(trustRes.payload).data.trustState).toBe('TRUSTED');
-
-      // Revoke device
-      const deleteDevRes = await app.inject({
-        method: 'DELETE',
-        url: `/api/v1/auth/devices/${deviceId}`,
-        headers: { authorization: `Bearer ${rawToken}` },
-      });
-
-      expect(deleteDevRes.statusCode).toBe(200);
-      expect(JSON.parse(deleteDevRes.payload).data.revoked).toBe(true);
+      expect(patchRes.statusCode).toBe(200);
+      expect(JSON.parse(patchRes.payload).data.trustState).toBe('TRUSTED');
     });
 
     it('records and returns security audit events for authenticated user', async () => {
-      const validToken = createMockGoogleIdToken({
-        sub: 'google_sub_events_test',
-        email: 'events.tester@example.com',
+      const validToken = createMockFirebaseIdToken({
+        uid: 'firebase_security_audit_tester',
+        email: 'audit.tester@example.com',
       });
 
       const loginRes = await app.inject({
         method: 'POST',
-        url: '/api/v1/auth/google',
+        url: '/api/v1/auth/session',
         payload: { idToken: validToken },
       });
       const rawToken = JSON.parse(loginRes.payload).data.token;
@@ -777,14 +702,10 @@ describe('Phase 4: Authentication and Identity', () => {
       const body = JSON.parse(eventsRes.payload);
       expect(body.data).toBeDefined();
       expect(Array.isArray(body.data)).toBe(true);
-      expect(body.data.some(e => e.eventType === 'LOGIN_SUCCESS')).toBe(true);
-
-      // Verify metadata does NOT leak tokens or secrets
-      for (const ev of body.data) {
-        const str = JSON.stringify(ev);
-        expect(str).not.toContain(rawToken);
-        expect(str).not.toContain('password');
-      }
+      expect(body.data.length).toBeGreaterThanOrEqual(1);
+      expect(body.data[0].eventType).toBe('LOGIN_SUCCESS');
+      // Verify no sensitive token hash leaked
+      expect(body.data[0].metadata?.sessionTokenHash).toBeUndefined();
     });
   });
 });

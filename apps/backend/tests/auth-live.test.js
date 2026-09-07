@@ -8,7 +8,7 @@ import { accountBootstrapService } from '../src/modules/auth/account-bootstrap.s
 import { authService } from '../src/modules/auth/auth.service.js';
 import { hashSessionToken } from '../src/core/crypto.js';
 
-describe('Phase 4: Live PostgreSQL 16 Database & Auth Integration Tests', () => {
+describe('Phase 4: Live PostgreSQL 16 Database & Auth Integration Tests (Firebase Authority)', () => {
   let isDbAvailable = false;
 
   beforeAll(async () => {
@@ -38,17 +38,17 @@ describe('Phase 4: Live PostgreSQL 16 Database & Auth Integration Tests', () => 
     expect(tableNames).toContain('external_accounts');
   });
 
-  it('verifies live account bootstrap: atomic creation of user, workspace, owner membership, and external identity', async () => {
+  it('verifies live account bootstrap: atomic creation of user, personal workspace, owner membership, and FIREBASE external identity', async () => {
     if (!isDbAvailable) return;
 
-    const testEmail = `live_bootstrap_${Date.now()}@example.com`;
-    const testSub = `google_sub_live_${Date.now()}`;
+    const testEmail = `live_firebase_${Date.now()}@example.com`;
+    const testUid = `firebase_uid_live_${Date.now()}`;
 
     const bootstrapResult = await accountBootstrapService.bootstrapOrResolveUser({
-      provider: 'GOOGLE',
-      subject: testSub,
+      provider: 'FIREBASE',
+      subject: testUid,
       email: testEmail,
-      displayName: 'Live Test User',
+      displayName: 'Live Firebase User',
       picture: 'https://example.com/avatar.png',
     });
 
@@ -56,18 +56,100 @@ describe('Phase 4: Live PostgreSQL 16 Database & Auth Integration Tests', () => 
     expect(bootstrapResult.user.id).toBeDefined();
     expect(bootstrapResult.workspace.name).toBe('Personal');
     expect(bootstrapResult.membership.role).toBe('OWNER');
-    expect(bootstrapResult.externalIdentity.providerSubject).toBe(testSub);
+    expect(bootstrapResult.externalIdentity.provider).toBe('FIREBASE');
+    expect(bootstrapResult.externalIdentity.providerSubject).toBe(testUid);
 
-    // Verify returning user resolves existing record without duplicates
+    // Verify returning user resolves existing record idempotently without duplicates
     const secondCall = await accountBootstrapService.bootstrapOrResolveUser({
-      provider: 'GOOGLE',
-      subject: testSub,
+      provider: 'FIREBASE',
+      subject: testUid,
       email: testEmail,
-      displayName: 'Live Test User',
+      displayName: 'Live Firebase User',
     });
 
     expect(secondCall.isNewUser).toBe(false);
     expect(secondCall.user.id).toBe(bootstrapResult.user.id);
+  });
+
+  it('verifies concurrency requirement: simultaneous first-login race with SAME Firebase UID yields exactly one user and workspace', async () => {
+    if (!isDbAvailable) return;
+
+    const raceUid = `firebase_race_uid_${Date.now()}`;
+    const raceEmail = `race_${Date.now()}@example.com`;
+
+    const identity = {
+      provider: 'FIREBASE',
+      subject: raceUid,
+      email: raceEmail,
+      displayName: 'Race Condition Tester',
+    };
+
+    // Fire 2 concurrent bootstrap operations simultaneously against PostgreSQL 16
+    const [result1, result2] = await Promise.all([
+      accountBootstrapService.bootstrapOrResolveUser(identity),
+      accountBootstrapService.bootstrapOrResolveUser(identity),
+    ]);
+
+    // Both requests must succeed without unhandled exceptions
+    expect(result1.user).toBeDefined();
+    expect(result2.user).toBeDefined();
+    // Both must resolve to the identical Workaholic User UUID
+    expect(result1.user.id).toBe(result2.user.id);
+
+    // Exactly one was the new user creator
+    const isNewCount = [result1.isNewUser, result2.isNewUser].filter(Boolean).length;
+    expect(isNewCount).toBe(1);
+
+    // Verify raw PostgreSQL state: exactly 1 external_identities, 1 user, 1 workspace, 1 membership
+    const extRows = await query(
+      `SELECT * FROM external_identities WHERE provider = 'FIREBASE' AND provider_subject = $1`,
+      [raceUid],
+    );
+    expect(extRows.rows).toHaveLength(1);
+
+    const userRows = await query(`SELECT * FROM users WHERE id = $1`, [result1.user.id]);
+    expect(userRows.rows).toHaveLength(1);
+
+    const wsRows = await query(`SELECT * FROM workspaces WHERE owner_user_id = $1`, [
+      result1.user.id,
+    ]);
+    expect(wsRows.rows).toHaveLength(1);
+
+    const memRows = await query(`SELECT * FROM workspace_memberships WHERE user_id = $1`, [
+      result1.user.id,
+    ]);
+    expect(memRows.rows).toHaveLength(1);
+    expect(memRows.rows[0].role).toBe('OWNER');
+  });
+
+  it('enforces identity isolation on PostgreSQL: Firebase UID A and B remain strictly separate', async () => {
+    if (!isDbAvailable) return;
+
+    const uidA = `firebase_iso_A_${Date.now()}`;
+    const uidB = `firebase_iso_B_${Date.now()}`;
+
+    const resA = await accountBootstrapService.bootstrapOrResolveUser({
+      provider: 'FIREBASE',
+      subject: uidA,
+      email: `isoA_${Date.now()}@example.com`,
+      displayName: 'User A',
+    });
+
+    const resB = await accountBootstrapService.bootstrapOrResolveUser({
+      provider: 'FIREBASE',
+      subject: uidB,
+      email: `isoB_${Date.now()}@example.com`,
+      displayName: 'User B',
+    });
+
+    expect(resA.user.id).not.toBe(resB.user.id);
+    expect(resA.workspace.id).not.toBe(resB.workspace.id);
+
+    // Verify external identities in PostgreSQL
+    const extA = await externalIdentitiesRepo.findExternalIdentity('FIREBASE', uidA);
+    const extB = await externalIdentitiesRepo.findExternalIdentity('FIREBASE', uidB);
+    expect(extA.userId).toBe(resA.user.id);
+    expect(extB.userId).toBe(resB.user.id);
   });
 
   it('enforces UNIQUE constraint on (provider, provider_subject) in external_identities', async () => {
@@ -83,21 +165,21 @@ describe('Phase 4: Live PostgreSQL 16 Database & Auth Integration Tests', () => 
       email: `user2_${Date.now()}@example.com`,
     });
 
-    const sharedSub = `shared_sub_${Date.now()}`;
+    const sharedUid = `shared_firebase_uid_${Date.now()}`;
 
     // First identity link succeeds
     await externalIdentitiesRepo.createExternalIdentity({
       userId: user1.id,
-      provider: 'GOOGLE',
-      providerSubject: sharedSub,
+      provider: 'FIREBASE',
+      providerSubject: sharedUid,
     });
 
     // Second identity link with identical (provider, provider_subject) must fail with duplicate key violation
     await expect(
       externalIdentitiesRepo.createExternalIdentity({
         userId: user2.id,
-        provider: 'GOOGLE',
-        providerSubject: sharedSub,
+        provider: 'FIREBASE',
+        providerSubject: sharedUid,
       }),
     ).rejects.toThrow();
   });
@@ -116,7 +198,7 @@ describe('Phase 4: Live PostgreSQL 16 Database & Auth Integration Tests', () => 
       eventType: 'LOGIN_SUCCESS',
       ipAddress: '192.168.1.50',
       userAgent: 'PostmanRuntime/7.39',
-      metadata: { method: 'GOOGLE_OAUTH' },
+      metadata: { provider: 'FIREBASE' },
     });
 
     await securityEventsRepo.recordSecurityEvent({

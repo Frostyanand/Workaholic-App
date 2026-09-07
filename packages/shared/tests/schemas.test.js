@@ -10,6 +10,14 @@ import {
   DEVICE_TRUST_STATE,
   SESSION_TYPE,
   createTaskSchema,
+  updateTaskSchema,
+  taskQuerySchema,
+  createSubtaskSchema,
+  createDependencySchema,
+  createTaskLinkSchema,
+  createLabelSchema,
+  createWorkBlockSchema,
+  DEPENDENCY_TYPE,
   idempotencyKeySchema,
   apiErrorSchema,
   apiSuccessSingleSchema,
@@ -25,7 +33,8 @@ describe('@workaholic/shared constants', () => {
   it('exposes immutable task statuses', () => {
     expect(TASK_STATUS.TODO).toBe('TODO');
     expect(TASK_STATUS.IN_PROGRESS).toBe('IN_PROGRESS');
-    expect(TASK_STATUS.DONE).toBe('DONE');
+    expect(TASK_STATUS.COMPLETED).toBe('COMPLETED');
+    expect(TASK_STATUS.DONE).toBe('COMPLETED'); // Resolves to COMPLETED
     expect(() => {
       TASK_STATUS.NEW_STATUS = 'NEW';
     }).toThrow();
@@ -175,5 +184,119 @@ describe('@workaholic/shared core entity schemas', () => {
       expiresAt: '2026-12-31T23:59:59.000Z',
     });
     expect(validSession.success).toBe(true);
+  });
+
+  it('validates Phase 5 Task Management schemas and constants', () => {
+    // 1. Task priorities P0-P4
+    expect(TASK_PRIORITY.P0).toBe('P0');
+    expect(TASK_PRIORITY.P1).toBe('P1');
+    expect(TASK_PRIORITY.P2).toBe('P2');
+    expect(TASK_PRIORITY.P3).toBe('P3');
+    expect(TASK_PRIORITY.P4).toBe('P4');
+
+    // 2. Task statuses
+    expect(TASK_STATUS.TODO).toBe('TODO');
+    expect(TASK_STATUS.IN_PROGRESS).toBe('IN_PROGRESS');
+    expect(TASK_STATUS.BLOCKED).toBe('BLOCKED');
+    expect(TASK_STATUS.COMPLETED).toBe('COMPLETED');
+    expect(TASK_STATUS.CANCELLED).toBe('CANCELLED');
+
+    // 3. Create task with full properties
+    const taskPayload = {
+      title: 'Implement Task Domain',
+      description: 'Full Phase 5 implementation',
+      priority: TASK_PRIORITY.P0,
+      status: TASK_STATUS.IN_PROGRESS,
+      startAt: '2026-09-07T00:00:00.000Z',
+      dueAt: '2026-09-07T12:00:00.000Z',
+      estimatedDuration: 120,
+    };
+    const parsedTask = createTaskSchema.safeParse(taskPayload);
+    expect(parsedTask.success).toBe(true);
+    expect(parsedTask.data.priority).toBe('P0');
+    expect(parsedTask.data.estimatedDuration).toBe(120);
+
+    // 4. Update task schema with optimistic concurrency version
+    const updatePayload = {
+      title: 'Updated Task Title',
+      version: 2,
+    };
+    const parsedUpdate = updateTaskSchema.safeParse(updatePayload);
+    expect(parsedUpdate.success).toBe(true);
+    expect(parsedUpdate.data.version).toBe(2);
+
+    // 5. Task query schema with overdue and sort
+    const queryPayload = {
+      status: 'TODO',
+      priority: 'P1',
+      overdue: 'true',
+      sort: 'due_at',
+      order: 'asc',
+      limit: '25',
+    };
+    const parsedQuery = taskQuerySchema.safeParse(queryPayload);
+    expect(parsedQuery.success).toBe(true);
+    expect(parsedQuery.data.overdue).toBe(true);
+    expect(parsedQuery.data.limit).toBe(25);
+    expect(parsedQuery.data.sort).toBe('due_at');
+
+    // 6. Subtask schema
+    const subtaskPayload = {
+      title: 'Subtask 1: Migration',
+      priority: TASK_PRIORITY.P1,
+      estimatedDuration: 30,
+    };
+    const parsedSubtask = createSubtaskSchema.safeParse(subtaskPayload);
+    expect(parsedSubtask.success).toBe(true);
+
+    // 7. Dependency schema
+    const depPayload = {
+      dependsOnTaskId: '123e4567-e89b-12d3-a456-426614174000',
+      dependencyType: DEPENDENCY_TYPE.BLOCKS,
+    };
+    const parsedDep = createDependencySchema.safeParse(depPayload);
+    expect(parsedDep.success).toBe(true);
+
+    // 8. Task link schema (safe URLs accepted, dangerous URLs rejected)
+    expect(createTaskLinkSchema.safeParse({ url: 'https://example.com' }).success).toBe(true);
+    expect(createTaskLinkSchema.safeParse({ url: 'http://example.com/api' }).success).toBe(true);
+    expect(createTaskLinkSchema.safeParse({ url: '/internal/tasks/123' }).success).toBe(true);
+    expect(createTaskLinkSchema.safeParse({ url: 'mailto:test@example.com' }).success).toBe(true);
+
+    const jsUrl = createTaskLinkSchema.safeParse({ url: 'javascript:alert(1)' });
+    expect(jsUrl.success).toBe(false);
+    expect(jsUrl.error.issues[0].message).toContain('safe protocol');
+
+    const dataUrl = createTaskLinkSchema.safeParse({
+      url: 'data:text/html,<script>alert(1)</script>',
+    });
+    expect(dataUrl.success).toBe(false);
+
+    // 9. Label schema
+    const labelPayload = {
+      name: 'Urgent Bug',
+      color: '#EF4444',
+      description: 'Critical issues',
+    };
+    const parsedLabel = createLabelSchema.safeParse(labelPayload);
+    expect(parsedLabel.success).toBe(true);
+    expect(createLabelSchema.safeParse({ name: 'Invalid Color', color: 'blue' }).success).toBe(
+      false,
+    );
+
+    // 10. Work block schema with chronological validation
+    const validBlock = createWorkBlockSchema.safeParse({
+      startAt: '2026-09-07T10:00:00.000Z',
+      endAt: '2026-09-07T11:00:00.000Z',
+      timezone: 'UTC',
+    });
+    expect(validBlock.success).toBe(true);
+
+    const invalidBlock = createWorkBlockSchema.safeParse({
+      startAt: '2026-09-07T11:00:00.000Z',
+      endAt: '2026-09-07T10:00:00.000Z',
+      timezone: 'UTC',
+    });
+    expect(invalidBlock.success).toBe(false);
   });
 });

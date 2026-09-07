@@ -37,4 +37,8 @@ export const config = Object.freeze({
   cronSecret: process.env.CRON_SECRET || 'dev_cron_secret',
   clientUrl: process.env.CLIENT_URL || 'http://localhost:5173',
   logLevel: process.env.LOG_LEVEL || (process.env.NODE_ENV === 'test' ? 'silent' : 'info'),
+  firebaseProjectId: process.env.FIREBASE_PROJECT_ID || 'workaholic-dev',
+  firebaseClientEmail: process.env.FIREBASE_CLIENT_EMAIL || '',
+  firebasePrivateKey: process.env.FIREBASE_PRIVATE_KEY || '',
+  firebaseAuthEmulatorHost: process.env.FIREBASE_AUTH_EMULATOR_HOST || '',
 });

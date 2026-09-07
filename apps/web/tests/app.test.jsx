@@ -40,7 +40,24 @@ describe('Web Application Shell (Task 1.1)', () => {
     expect(container.textContent).toContain('Work Blocks & Day Order');
   });
 
-  it('renders placeholder views for shell routes', async () => {
+  it('renders placeholder views for remaining shell routes', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(
+        <MemoryRouter initialEntries={['/boards']}>
+          <App />
+        </MemoryRouter>,
+      );
+    });
+
+    expect(container.textContent).toContain('Projects & Boards');
+    expect(container.textContent).toContain('Phase 6');
+  });
+
+  it('renders task management interface at /tasks (Task 5.21)', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     const root = createRoot(container);
@@ -54,7 +71,8 @@ describe('Web Application Shell (Task 1.1)', () => {
     });
 
     expect(container.textContent).toContain('Task Management');
-    expect(container.textContent).toContain('Phase 5');
+    expect(container.textContent).toContain('New Task');
+    expect(container.textContent).toContain('All Tasks');
   });
 
   it('renders unauthenticated shell and login view at /login', async () => {

@@ -1,5 +1,11 @@
 import { z } from 'zod';
-import { TASK_STATUS, TASK_PRIORITY, ERROR_CODE } from '../constants/index.js';
+import {
+  TASK_STATUS,
+  TASK_PRIORITY,
+  ERROR_CODE,
+  DEPENDENCY_TYPE,
+  TASK_LINK_TYPE,
+} from '../constants/index.js';
 
 export const idSchema = z.string().uuid({ message: 'Invalid UUID identifier' });
 
@@ -19,19 +25,142 @@ export const createTaskSchema = z.object({
     .trim()
     .min(1, 'Task title cannot be empty')
     .max(255, 'Task title must not exceed 255 characters'),
-  description: z.string().trim().max(10000).optional(),
-  priority: z.nativeEnum(TASK_PRIORITY).default(TASK_PRIORITY.MEDIUM),
+  description: z.string().trim().max(10000).nullable().optional(),
+  priority: z.nativeEnum(TASK_PRIORITY).default(TASK_PRIORITY.P3),
   status: z.nativeEnum(TASK_STATUS).default(TASK_STATUS.TODO),
-  projectId: z.string().uuid().optional(),
-  boardId: z.string().uuid().optional(),
+  projectId: z.string().uuid().nullable().optional(),
+  boardId: z.string().uuid().nullable().optional(),
+  boardColumnId: z.string().uuid().nullable().optional(),
+  parentTaskId: z.string().uuid().nullable().optional(),
+  assignedTo: z.string().uuid().nullable().optional(),
+  startAt: z
+    .string()
+    .datetime({ message: 'startAt must be a valid ISO 8601 string' })
+    .nullable()
+    .optional(),
   dueAt: z
     .string()
     .datetime({ message: 'dueAt must be a valid ISO 8601 string' })
-    .optional()
-    .nullable(),
+    .nullable()
+    .optional(),
+  estimatedDuration: z.coerce
+    .number()
+    .int('estimatedDuration must be an integer')
+    .nonnegative('estimatedDuration cannot be negative')
+    .nullable()
+    .optional(),
 });
 
-export const updateTaskSchema = createTaskSchema.partial();
+export const updateTaskSchema = createTaskSchema.partial().extend({
+  version: z.coerce.number().int().positive().optional(),
+});
+
+export const taskQuerySchema = z.object({
+  status: z.string().optional(),
+  priority: z.string().optional(),
+  labelId: z.string().uuid().optional(),
+  parentTaskId: z.string().uuid().optional(),
+  assignedTo: z.string().uuid().optional(),
+  projectId: z.string().uuid().optional(),
+  boardId: z.string().uuid().optional(),
+  overdue: z
+    .union([z.boolean(), z.enum(['true', 'false'])])
+    .transform(val => val === true || val === 'true')
+    .optional(),
+  search: z.string().trim().max(255).optional(),
+  sort: z
+    .enum([
+      'due_at',
+      'dueAt',
+      'priority',
+      'created_at',
+      'createdAt',
+      'title',
+      'updated_at',
+      'updatedAt',
+    ])
+    .default('created_at'),
+  order: z.enum(['asc', 'desc', 'ASC', 'DESC']).default('desc'),
+  limit: z.coerce.number().int().positive().max(100).default(50),
+  offset: z.coerce.number().int().nonnegative().default(0),
+  cursor: z.string().optional(),
+});
+
+export const createSubtaskSchema = z.object({
+  title: z
+    .string({ required_error: 'Subtask title is required' })
+    .trim()
+    .min(1, 'Subtask title cannot be empty')
+    .max(255, 'Subtask title must not exceed 255 characters'),
+  description: z.string().trim().max(10000).nullable().optional(),
+  priority: z.nativeEnum(TASK_PRIORITY).default(TASK_PRIORITY.P3),
+  startAt: z.string().datetime().nullable().optional(),
+  dueAt: z.string().datetime().nullable().optional(),
+  estimatedDuration: z.coerce.number().int().nonnegative().nullable().optional(),
+  assignedTo: z.string().uuid().nullable().optional(),
+});
+
+export const createDependencySchema = z.object({
+  dependsOnTaskId: idSchema,
+  dependencyType: z.nativeEnum(DEPENDENCY_TYPE).default(DEPENDENCY_TYPE.BLOCKS),
+});
+
+const SAFE_URL_PREFIX_REGEX = /^(https?:\/\/|mailto:|\/)/i;
+
+export const createTaskLinkSchema = z.object({
+  url: z
+    .string({ required_error: 'URL is required' })
+    .trim()
+    .min(1, 'URL cannot be empty')
+    .refine(
+      url => {
+        const lower = url.trim().toLowerCase();
+        if (
+          lower.startsWith('javascript:') ||
+          lower.startsWith('data:') ||
+          lower.startsWith('vbscript:')
+        ) {
+          return false;
+        }
+        return SAFE_URL_PREFIX_REGEX.test(lower);
+      },
+      { message: 'URL must use a safe protocol (http, https, mailto, or relative internal path)' },
+    ),
+  title: z.string().trim().max(255).nullable().optional(),
+  linkType: z.nativeEnum(TASK_LINK_TYPE).default(TASK_LINK_TYPE.EXTERNAL),
+});
+
+export const createLabelSchema = z.object({
+  name: z
+    .string({ required_error: 'Label name is required' })
+    .trim()
+    .min(1, 'Label name cannot be empty')
+    .max(100, 'Label name must not exceed 100 characters'),
+  color: z
+    .string()
+    .trim()
+    .regex(/^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/, 'Color must be a valid hex string (e.g. #4F46E5)')
+    .default('#4F46E5'),
+  description: z.string().trim().max(500).nullable().optional(),
+});
+
+export const updateLabelSchema = createLabelSchema.partial();
+
+export const assignLabelSchema = z.object({
+  labelId: idSchema,
+});
+
+export const createWorkBlockSchema = z
+  .object({
+    startAt: z.string().datetime({ message: 'startAt must be a valid ISO 8601 string' }),
+    endAt: z.string().datetime({ message: 'endAt must be a valid ISO 8601 string' }),
+    timezone: z.string().trim().max(100).default('UTC'),
+    calendarId: z.string().uuid().nullable().optional(),
+  })
+  .refine(data => new Date(data.endAt) > new Date(data.startAt), {
+    message: 'endAt must be strictly after startAt',
+    path: ['endAt'],
+  });
 
 export const apiErrorSchema = z.object({
   error: z.object({
@@ -112,8 +241,8 @@ export const createJobSchema = z.object({
 });
 
 // Auth & OAuth schemas (Phase 4)
-export const googleAuthInputSchema = z.object({
-  idToken: z.string().trim().min(10, 'Google ID token is required'),
+export const firebaseAuthInputSchema = z.object({
+  idToken: z.string().trim().min(10, 'Firebase ID token is required'),
   device: z
     .object({
       platform: z.enum(['WEB', 'WINDOWS', 'ANDROID']).default('WEB'),
@@ -122,6 +251,9 @@ export const googleAuthInputSchema = z.object({
     })
     .optional(),
 });
+
+export const authSessionExchangeInputSchema = firebaseAuthInputSchema;
+export const googleAuthInputSchema = firebaseAuthInputSchema; // Backwards compatibility alias
 
 export const oauthAuthorizeQuerySchema = z.object({
   service: z.enum(['CALENDAR', 'TASKS', 'DRIVE']),

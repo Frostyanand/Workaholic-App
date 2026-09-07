@@ -6,15 +6,41 @@
 export const TASK_STATUS = Object.freeze({
   TODO: 'TODO',
   IN_PROGRESS: 'IN_PROGRESS',
-  DONE: 'DONE',
+  BLOCKED: 'BLOCKED',
+  COMPLETED: 'COMPLETED',
+  DONE: 'COMPLETED', // Backward-compatible alias resolving to COMPLETED
   CANCELLED: 'CANCELLED',
 });
 
 export const TASK_PRIORITY = Object.freeze({
+  P0: 'P0', // Critical
+  P1: 'P1', // Urgent
+  P2: 'P2', // High
+  P3: 'P3', // Medium
+  P4: 'P4', // Low
   LOW: 'LOW',
   MEDIUM: 'MEDIUM',
   HIGH: 'HIGH',
   URGENT: 'URGENT',
+});
+
+export const DEPENDENCY_TYPE = Object.freeze({
+  BLOCKS: 'BLOCKS',
+  BLOCKED_BY: 'BLOCKED_BY',
+  DEPENDS_ON: 'DEPENDS_ON',
+  RELATED_TO: 'RELATED_TO',
+});
+
+export const TASK_LINK_TYPE = Object.freeze({
+  EXTERNAL: 'EXTERNAL',
+  INTERNAL: 'INTERNAL',
+});
+
+export const WORK_BLOCK_STATUS = Object.freeze({
+  SCHEDULED: 'SCHEDULED',
+  IN_PROGRESS: 'IN_PROGRESS',
+  COMPLETED: 'COMPLETED',
+  CANCELLED: 'CANCELLED',
 });
 
 export const DAY_ORDER = Object.freeze({

@@ -564,121 +564,72 @@ All required verification checks have passed successfully:
 
 ---
 
-## Phase 4: Authentication and Identity — COMPLETED & VERIFIED
+---
 
-### Completed Tasks
+## Phase 4: Authentication and Identity — RECONCILED, COMPLETED & VERIFIED
 
-1. **Task 4.0 — Database Foundation for Auth & Identity**:
-   - Migration `1725628803000_create_auth_and_identity_tables.sql`:
-     - `external_identities`: Table mapping external provider subjects (e.g. Google `sub`) to internal Workaholic user UUIDs. Enforces `UNIQUE (provider, provider_subject)` and foreign key cascade to `users(id)`.
-     - `security_events`: Append-oriented audit logging table recording authentication lifecycle events (`LOGIN_SUCCESS`, `LOGIN_FAILURE`, `LOGOUT`, `SESSION_REVOKED`, `REVOKE_ALL_SESSIONS`, `DEVICE_REGISTERED`, `DEVICE_TRUST_UPDATED`, `DEVICE_REVOKED`, `GOOGLE_OAUTH_CONNECTED`, `GOOGLE_OAUTH_DISCONNECTED`) with indexed `(user_id, created_at DESC)` and `(event_type, created_at DESC)`.
-     - `integrations`: Integration state tracking table with lifecycle check constraints (`DISCONNECTED`, `AUTHORIZING`, `CONNECTED`, `ERROR`, `REAUTH_REQUIRED`).
-     - `external_accounts`: Provider account mapping storing encrypted long-lived tokens and granted scopes with `UNIQUE (provider, external_account_id)`.
-     - Reversible migration with complete `-- Down Migration` tested and applied against live PostgreSQL 16.
+### Architectural Reconciliation & Final Correction
 
-2. **Task 4.1 — Google Authentication & Identity Verification**:
-   - `GoogleAuthService` (`apps/backend/src/modules/auth/google-auth.service.js`):
-     - Answers strictly: _"Who is this user?"_
-     - Validates OpenID Connect ID token JWT format, signature/claims, allowed Google issuers (`accounts.google.com`, `https://accounts.google.com`), clock skew expiration, configured audience, subject identifier, and verified email status.
-     - Preserves provider identity (`sub`) strictly separate from the internal Workaholic User UUID.
-     - Zero ambient Google API scopes requested or granted during authentication.
-   - `external-identities.repository.js`:
-     - Pure parameterized SQL data access mapping external accounts to internal users.
+During Phase 4 review, an architectural discrepancy was detected: the initial implementation had introduced direct Google OpenID Connect verification (`GoogleAuthService`) calling `POST /api/v1/auth/google`. This conflicted with the authoritative repository architecture (`docs/6.SYSTEM-ARCHITECTURE.md` §13, 14, 66; `docs/1.project.md` §5, 6; `docs/2.requirements.md` Req 22; and `docs/phase-wise-plan.md` §7), which establishes:
 
-3. **Task 4.2 — Google API Authorization (OAuth Scope Boundary)**:
-   - `OAuthBoundaryService` (`apps/backend/src/modules/auth/oauth-boundary.service.js`):
-     - Strict boundary separation between user identity authentication and Google API access.
-     - Granular on-demand OAuth consent flows for:
-       - `CALENDAR`: `['https://www.googleapis.com/auth/calendar.events', 'https://www.googleapis.com/auth/calendar.readonly']`
-       - `TASKS`: `['https://www.googleapis.com/auth/tasks']`
-       - `DRIVE`: `['https://www.googleapis.com/auth/drive.file']`
-     - Cryptographically secure CSRF state generation and validation (`generateOAuthState()`, 10-minute expiration, user and service mismatch protection).
-     - Sensitive credentials encrypted with AES-256-GCM (`encryptCredentials()`) before storage in `external_accounts.encrypted_credentials`.
-     - Raw tokens and decrypted credentials are never exposed via API responses or logged.
-     - User-initiated integration disconnect without terminating Workaholic user identity or sessions.
-   - `integrations.repository.js`:
-     - Pure parameterized SQL upsert, retrieval, and cascade deletion for external accounts.
+1. **Firebase Authentication as the Authentication Authority**:
+   Answers strictly _"Who is this user?"_ through client-side Firebase Auth and backend Firebase ID token verification via `firebase-admin`.
+2. **External Identity Mapping to Native Workaholic User**:
+   Maps verified Firebase identity (`provider = 'FIREBASE'`, `provider_subject = <firebase_uid>`) to the internal Workaholic User UUID.
+3. **Native Workaholic Session Authority**:
+   Application sessions are managed authoritatively by Workaholic (`sessions` table with SHA-256 token hashing, 256-bit entropy, device associations, security audit trail).
+4. **Google API OAuth Boundary Kept Strictly Independent**:
+   Google Calendar, Tasks, and Drive authorization remains a completely separate OAuth2 lifecycle (`oauth-boundary.service.js` with AES-256-GCM encrypted credentials). Disconnecting Google API integrations NEVER deletes or alters the Workaholic account or active sessions.
 
-4. **Task 4.3 — Sessions Engine & Token Security**:
-   - Centralized cryptographic foundation (`apps/backend/src/core/crypto.js`):
-     - `generateSessionToken()`: 256-bit entropy via `crypto.randomBytes(32).toString('hex')`.
-     - `hashSessionToken()`: Deterministic SHA-256 hex digest.
-     - Raw tokens are NEVER stored in PostgreSQL; only `session_token_hash` is persisted.
-     - Partial index `idx_sessions_active_lookup` on `sessions (session_token_hash) WHERE revoked_at IS NULL`.
-   - `AuthService` (`apps/backend/src/modules/auth/auth.service.js`):
-     - `createSession`: Provisions 30-day session with hashed token and records `LOGIN_SUCCESS` audit event.
-     - `validateRawToken`: Hashes presented raw token, verifies expiry (`expires_at > CURRENT_TIMESTAMP`), revocation (`revoked_at IS NULL`), and active user status (`deleted_at IS NULL`), and updates `last_seen_at`.
-     - `logout`: Revokes active session, clears cookie, and logs `LOGOUT` event.
-     - `revokeUserSession`: Revokes specific session with verified user ownership (IDOR shielded with 404).
-     - `revokeAllUserSessions`: Simultaneously terminates all active sessions for a user.
-   - Fastify Request Pipeline Integration (`auth.middleware.js`):
-     - `extractTokenFromRequest`: Extracts session token from `Authorization: Bearer <token>` or `workaholic_session` cookie.
-     - `authenticateRequest`: Global `preHandler` hook populating `request.user` and `request.session`.
-     - `requireAuth`: Enforces authenticated identity with standardized 401 `AUTHENTICATION_REQUIRED` envelope.
+### Reconciled Implementation Details
 
-5. **Task 4.4 — Device Registration & Multi-Device Tracking**:
-   - `devices.repository.js` & `AuthService`:
-     - Parses device information from request body or `x-platform`, `x-device-name`, `x-app-version` headers.
-     - Tracks client devices across Web, Windows Desktop, and Android Mobile.
-     - Links `session.device_id` to the registered device.
-     - Trust state management (`UNTRUSTED`, `TRUSTED`, `REVOKED`).
-     - Remote device revocation: `revokeDeviceAndSessions` cascades revocation to all active sessions on that device and logs `DEVICE_REVOKED` audit event.
+1. **Firebase Authentication Service (`apps/backend/src/modules/auth/firebase-auth.service.js`)**:
+   - Built on official `firebase-admin` SDK token verification.
+   - Extracts normalized identity claims: `{ provider: 'FIREBASE', subject: uid, email, emailVerified, displayName, picture, signInProvider }`.
+   - Never trusts client-supplied identity fields.
+   - Preserves `emailVerified` as verified token metadata according to authoritative specifications without inventing arbitrary rejection rules.
+   - Includes test/emulator support with `createMockFirebaseIdToken()` strictly prohibited in production mode (`config.env === 'production'`).
+   - Clean removal of obsolete direct Google OIDC verifier (`google-auth.service.js`).
 
-6. **Task 4.5 — Security Events & Audit Logging**:
-   - `security-events.repository.js` (`apps/backend/src/modules/auth/security-events.repository.js`):
-     - Append-oriented audit logging conforming to `docs/12.PRIVACY-SECURITY.md` Section 48 & 49.
-     - Captures `LOGIN_SUCCESS`, `LOGOUT`, `SESSION_REVOKED`, `REVOKE_ALL_SESSIONS`, `DEVICE_REGISTERED`, `DEVICE_TRUST_UPDATED`, `DEVICE_REVOKED`, `GOOGLE_OAUTH_CONNECTED`, `GOOGLE_OAUTH_DISCONNECTED`.
-     - Strict sanitization: Passwords, raw tokens, ID tokens, and client secrets are automatically redacted from event metadata.
-     - Paginated audit log endpoint `GET /api/v1/auth/security-events` with tenant isolation.
+2. **Account Bootstrap Engine with Concurrency Guard (`apps/backend/src/modules/auth/account-bootstrap.service.js`)**:
+   - Authoritative identity key: Verified Firebase UID under `provider = 'FIREBASE'`.
+   - Atomic bootstrap within transaction: Provisions Workaholic User + Personal Workspace + OWNER Membership + External Identity link.
+   - Concurrency-safe: Simultaneous first-login requests for the same Firebase UID safely resolve to the identical single user and workspace without creating duplicate entities or throwing unhandled errors (verified against live PostgreSQL 16).
+   - Identity Isolation: Firebase UID A and Firebase UID B remain strictly isolated; changing email does not alter external identity mapping.
 
-7. **Task 4.6 — Account Bootstrap Engine**:
-   - `AccountBootstrapService` (`apps/backend/src/modules/auth/account-bootstrap.service.js`):
-     - First-time login: Atomically provisions within `withTransaction`:
-       1. User profile in `users` (display name, email, profile image).
-       2. Default personal workspace in `workspaces` (`name: 'Personal'`, `workspace_type: 'PERSONAL'`, `owner_user_id: user.id`).
-       3. Owner membership in `workspace_memberships` (`role: 'OWNER'`, `status: 'ACTIVE'`).
-       4. External identity mapping in `external_identities` (`provider: 'GOOGLE'`, `provider_subject: sub`).
-     - Idempotent returning user resolution: Seamlessly resolves returning users without duplicate profile or workspace creation.
-     - Existing email linking: Links external provider identity to an existing active account matching the verified email.
-     - Deactivated user protection: Rejects deactivated/soft-deleted users with 401 `AUTHENTICATION_FAILED`.
+3. **Canonical Authentication API (`apps/backend/src/modules/auth/auth.routes.js`)**:
+   - `POST /api/v1/auth/session` (canonical): Exchanges verified Firebase ID token for native Workaholic session, sets HttpOnly cookie, and returns `{ token, user, session, isNewUser }`.
+   - `POST /api/v1/auth/firebase` (alias): Identical service execution for clients requesting explicit Firebase exchange.
+   - Clean removal of `POST /api/v1/auth/google` as an authentication endpoint.
+   - Google API OAuth routes remain dedicated to Calendar/Tasks/Drive:
+     - `GET /api/v1/auth/google/authorize`: Scoped consent URL.
+     - `POST /api/v1/auth/google/callback`: Code exchange with AES-256-GCM encrypted credential persistence.
+     - `GET /api/v1/auth/google/status`: Integration connection status.
+     - `DELETE /api/v1/auth/google`: Disconnects Google integration without affecting user account or session.
 
-8. **Shared Schemas Expansion (`@workaholic/shared`)**:
-   - Added Zod schemas: `googleAuthInputSchema`, `oauthAuthorizeQuerySchema`, `oauthCallbackInputSchema`, `updateDeviceTrustInputSchema`, `securityEventsQuerySchema`.
-
-9. **HTTP Auth Routes Integration (`apps/backend/src/modules/auth/auth.routes.js`)**:
-   - `POST /api/v1/auth/google`: Google sign-in exchange returning raw session token, user profile, session details, and HttpOnly cookie.
-   - `GET /api/v1/auth/session`: Public session check endpoint.
-   - `POST /api/v1/auth/logout`: Revokes active session and clears cookie.
-   - `POST /api/v1/auth/revoke-all`: Revokes all active sessions for authenticated user.
-   - `GET /api/v1/auth/sessions`: Lists user's active sessions (omitting token hashes).
-   - `POST /api/v1/auth/sessions/:id/revoke`: Revokes specific session with IDOR protection.
-   - `GET /api/v1/auth/devices`: Lists registered devices.
-   - `PATCH /api/v1/auth/devices/:id/trust`: Updates device trust state.
-   - `DELETE /api/v1/auth/devices/:id`: Revokes device and terminates its active sessions.
-   - `GET /api/v1/auth/security-events`: Returns user-scoped audit trail with pagination.
-   - `GET /api/v1/auth/google/authorize`: Generates scoped OAuth URL (Calendar, Tasks, Drive).
-   - `POST /api/v1/auth/google/callback`: Exchanges code, stores encrypted credentials.
-   - `GET /api/v1/auth/google/status`: Returns integration status.
-   - `DELETE /api/v1/auth/google`: Disconnects Google API access.
+4. **Shared Schemas (`packages/shared/src/schemas/index.js`)**:
+   - `firebaseAuthInputSchema`: Validates `idToken` and optional `device` parameters.
+   - `authSessionExchangeInputSchema`: Alias for canonical session exchange.
 
 ---
 
 ### Verification Results
 
-All required verification checks have passed successfully:
+All quality gates and live database tests pass:
 
 | Verification Step        | Command                                               | Result     | Notes                                           |
 | ------------------------ | ----------------------------------------------------- | ---------- | ----------------------------------------------- |
 | JavaScript-Only Guard    | `npm run check:js-only`                               | **PASSED** | 0 TypeScript files found across repository      |
 | Linter Verification      | `npm run lint`                                        | **PASSED** | 0 errors, 0 warnings across all workspaces      |
 | Code Formatting Check    | `npm run format:check`                                | **PASSED** | All matched files use Prettier code style       |
-| Test Suite (Unit & HTTP) | `npx vitest run apps/backend/tests/auth.test.js`      | **PASSED** | 31/31 auth unit and HTTP tests passed           |
-| Test Suite (Live DB)     | `npx vitest run apps/backend/tests/auth-live.test.js` | **PASSED** | 6/6 real PostgreSQL 16 integration tests passed |
-| Monorepo Test Suite      | `npm test`                                            | **PASSED** | 232/232 tests passed across 20 test files       |
-| Web Production Build     | `npm run build -w @workaholic/web`                    | **PASSED** | Production bundle generated in 1.76s            |
+| Test Suite (Unit & HTTP) | `npx vitest run apps/backend/tests/auth.test.js`      | **PASSED** | 30/30 auth unit and HTTP tests passed           |
+| Test Suite (Live DB)     | `npx vitest run apps/backend/tests/auth-live.test.js` | **PASSED** | 8/8 real PostgreSQL 16 integration tests passed |
+| Monorepo Test Suite      | `npm test`                                            | **PASSED** | 233/233 tests passed across 20 test files       |
+| Web Production Build     | `npm run build -w @workaholic/web`                    | **PASSED** | Production bundle generated in 1.78s            |
 | Desktop Package Scaffold | `npm run check -w @workaholic/desktop`                | **PASSED** | Electron scaffold verified                      |
 | Mobile Package Scaffold  | `npm run check -w @workaholic/mobile`                 | **PASSED** | React Native / Expo scaffold verified           |
-| Live Database Migrations | `npm run migrate:up -w @workaholic/backend`           | **PASSED** | Applied, rolled back, and reapplied on PG 16    |
+
+| Live Database Migrations | `npm run migrate:up -w @workaholic/backend` | **PASSED** | Applied, rolled back, and reapplied on PG 16 |
 
 ---
 
@@ -691,3 +642,134 @@ All required verification checks have passed successfully:
 - **Security Audit Trail**: Append-oriented audit logging with automatic credential/token redaction.
 - **OAuth Boundary**: Separate consent flows and encrypted server-side credential storage for Google Calendar, Tasks, and Drive.
 - **Global Invariants Preserved**: Zero TypeScript, zero ORMs, PostgreSQL 16 authoritative, zero Redis/Kafka/microservices.
+
+---
+
+## Phase 5: Task Management — COMPLETED & VERIFIED
+
+### Completed Tasks
+
+1. **Task 5.1 & 5.2 — Task Domain Database Foundation & Invariants**:
+   - Migration `1725628804000_create_task_tables.sql` applied and verified against live PostgreSQL 16.15:
+     - `tasks`: Core table matching `docs/7.DATABASE-DESIGN.md`:
+       - `id` (UUID PK default `uuid_generate_v4()`)
+       - `workspace_id` (FK -> `workspaces(id)` ON DELETE CASCADE)
+       - `project_id` (UUID nullable, clean extension point for Phase 6)
+       - `board_id` (UUID nullable, clean extension point for Phase 6)
+       - `board_column_id` (UUID nullable, clean extension point for Phase 6)
+       - `parent_task_id` (UUID nullable, FK self-referential -> `tasks(id)` ON DELETE CASCADE)
+       - `title` (VARCHAR(255) NOT NULL with `chk_tasks_title_not_empty`)
+       - `description` (TEXT nullable)
+       - `status` (VARCHAR(32) NOT NULL DEFAULT 'TODO' with `chk_tasks_status`)
+       - `priority` (VARCHAR(8) NOT NULL DEFAULT 'P3' with `chk_tasks_priority` P0–P4)
+       - `start_at` (TIMESTAMPTZ nullable)
+       - `due_at` (TIMESTAMPTZ nullable)
+       - `estimated_duration` (INTEGER nullable, minutes)
+       - `completed_at` (TIMESTAMPTZ nullable)
+       - `created_by` (FK -> `users(id)` ON DELETE RESTRICT)
+       - `assigned_to` (UUID nullable, FK -> `users(id)` ON DELETE SET NULL)
+       - `version` (INTEGER NOT NULL DEFAULT 1 with `chk_tasks_version` > 0)
+       - `created_at`, `updated_at`, `deleted_at` (TIMESTAMPTZ)
+     - `labels`: Workspace-scoped tags (`id`, `workspace_id`, `name`, `color`, `description`, timestamps, `uq_labels_workspace_name`).
+     - `task_labels`: Composite join table (`task_id`, `label_id`, `created_at`, PK composite).
+     - `task_dependencies`: Directional dependencies (`id`, `workspace_id`, `task_id`, `depends_on_task_id`, `dependency_type`, `chk_task_dependencies_not_self`, `uq_task_dependencies_pair`).
+     - `task_links`: Reference links (`id`, `task_id`, `url`, `title`, `link_type`, `created_at`).
+     - `task_work_blocks`: Relational work block foundation (`id`, `task_id`, `calendar_id`, `start_at`, `end_at`, `timezone`, `status`, `chk_task_work_blocks_time`).
+     - Indexes: `idx_tasks_workspace_lookup`, `idx_tasks_status`, `idx_tasks_priority`, `idx_tasks_due_at` (partial index for active tasks), `idx_tasks_parent`, `idx_tasks_creator`, `idx_tasks_assignee`, and `idx_tasks_search_title` (GIN tsvector for full-text search).
+     - Reversibility: Full atomic `-- Down Migration` tested UP -> DOWN -> UP on PostgreSQL 16.
+
+2. **Task 5.3 — Shared Task Contracts (`@workaholic/shared`)**:
+   - `packages/shared/src/constants/index.js`:
+     - `TASK_STATUS`: `TODO`, `IN_PROGRESS`, `BLOCKED`, `COMPLETED`, `CANCELLED`, `DONE`.
+     - `TASK_PRIORITY`: `P0` (Critical), `P1` (Urgent), `P2` (High), `P3` (Medium), `P4` (Low), with backward-compatible legacy aliases.
+     - `DEPENDENCY_TYPE`: `BLOCKS`, `BLOCKED_BY`, `DEPENDS_ON`, `RELATED_TO`.
+     - `TASK_LINK_TYPE`: `EXTERNAL`, `INTERNAL`.
+     - `WORK_BLOCK_STATUS`: `SCHEDULED`, `ACTIVE`, `COMPLETED`, `CANCELLED`.
+   - `packages/shared/src/schemas/index.js`:
+     - `createTaskSchema`, `updateTaskSchema`, `taskQuerySchema`, `createSubtaskSchema`, `createDependencySchema`, `createTaskLinkSchema` (strict regex filtering out `javascript:`, `data:`, `vbscript:`), `createLabelSchema`, `updateLabelSchema`, `assignLabelSchema`, `createWorkBlockSchema`.
+   - Unit tests in `packages/shared/tests/schemas.test.js`: 21/21 tests passing.
+
+3. **Task 5.4 — Task Data Repositories**:
+   - `apps/backend/src/modules/tasks/tasks.repository.js`:
+     - Parameterized SQL with zero ORM; supports external transaction client propagation.
+     - `createTask`, `findTaskById`, `listTasks` (bounded filtering, sorting, cursor/offset pagination), `updateTask` with atomic optimistic concurrency version checking, `softDeleteTask`, `restoreTask`, `findSubtasks`, `getTaskAncestors` (recursive SQL CTE).
+   - `apps/backend/src/modules/tasks/labels.repository.js`: CRUD for workspace labels and associations.
+   - `apps/backend/src/modules/tasks/dependencies.repository.js`: Direct and graph queries for task dependencies.
+   - `apps/backend/src/modules/tasks/links.repository.js`: External and internal task link management.
+   - `apps/backend/src/modules/tasks/work-blocks.repository.js`: Work block relational foundation.
+
+4. **Task 5.5 to 5.16 — Domain Logic & Business Rules (`tasks.service.js`)**:
+   - **Task Independence**: Tasks exist independently in Inbox without requiring project or board.
+   - **Independent Completion & Reopening**: Completing all subtasks does not auto-complete parent; parent completion does not auto-complete children. Reopening restores incomplete state without mutating due dates.
+   - **Hierarchy & Subtask Cycle Prevention**: Subtasks retain full task capabilities; self-parenting and circular ancestor trees are strictly rejected via ancestor graph validation.
+   - **Priority & Status Independence**: Changing priority never mutates status; changing status never mutates priority.
+   - **Deterministic Overdue Calculation**: Evaluates `status !== COMPLETED && due_at < NOW()` without mutating due dates or inventing false database statuses.
+   - **Dependency Cycle Prevention**: Breadth-first search (BFS) graph reachability prevents transitive circular chains (e.g., A blocks B, B blocks C, C blocks A).
+   - **Safe Link Protocol Validation**: Rejects dangerous schemes (`javascript:`, `data:`) while supporting HTTPS, HTTP, mailto, and relative internal links.
+   - **Optimistic Concurrency**: Server checks current `version`; concurrent stale updates throw 409 `CONFLICT`.
+   - **Search Foundation**: Fast title search using PostgreSQL parameterized `ILIKE` and full-text GIN indexing.
+
+5. **Task 5.17 to 5.20 — API Routes & Authorization**:
+   - Endpoints in `apps/backend/src/modules/tasks/tasks.routes.js`:
+     - `GET /api/v1/tasks`: Bounded collection with filters (status, priority, labelId, overdue, search).
+     - `POST /api/v1/tasks`: Create task in workspace context.
+     - `GET /api/v1/tasks/:id`: Retrieve single task with subtasks, labels, dependencies, links.
+     - `PATCH /api/v1/tasks/:id`: Update task with optimistic concurrency.
+     - `DELETE /api/v1/tasks/:id`: Soft-delete task.
+     - `POST /api/v1/tasks/:id/restore`: Restore soft-deleted task.
+     - `POST /api/v1/tasks/:id/complete`: Explicit completion transition.
+     - `POST /api/v1/tasks/:id/reopen`: Explicit reopen transition.
+     - `GET / POST /api/v1/tasks/:id/subtasks`: Subtask operations.
+     - `GET / POST / DELETE /api/v1/tasks/:id/dependencies`: Dependency operations.
+     - `POST / DELETE /api/v1/tasks/:id/labels`: Label attachment/detachment.
+     - `GET / POST / DELETE /api/v1/tasks/:id/links`: Link operations.
+     - `GET / POST / DELETE /api/v1/tasks/:id/work-blocks`: Work block operations.
+     - `GET / POST / DELETE /api/v1/tasks/labels`: Workspace labels CRUD.
+   - Authorization: Tenant isolation enforced on every query; cross-workspace access or mutation rejected.
+
+6. **Task 5.21 — Web Task UI (`apps/web`)**:
+   - `TasksPage.jsx`: Full-featured task management cockpit with search, priority filters (P0–P4), status tabs (All, To Do, In Progress, Blocked, Completed), overdue filter toggle, localized loading states, and accessible empty states.
+   - `TaskItem.jsx`: Accessible task card with role="checkbox", aria-checked, priority badges, overdue badges, due date formatting, and subtask counters.
+   - `CreateTaskModal.jsx`: Quick capture modal with autofocus, keyboard accessibility (Esc/Enter), priority selector, due date/time, and estimated duration.
+   - `TaskDetailDrawer.jsx`: Side drawer for inspection, editing, optimistic subtask checklist management, and concurrency conflict notifications.
+   - `tasks.api.js`: Standardized API client for tasks, subtasks, and labels.
+
+7. **Task 5.22 — Testing Matrix Implementation**:
+   - `apps/backend/tests/tasks.test.js`: 24 unit/mock tests.
+   - `apps/backend/tests/tasks-live.test.js`: 20 live PostgreSQL 16 tests covering migrations, constraints, optimistic concurrency, cycle prevention, tenant isolation, and soft delete/restore.
+   - `apps/web/tests/tasks.test.jsx`: 10 web UI tests covering rendering, keyboard accessibility, subtask management, and filtering.
+   - `apps/web/tests/app.test.jsx`: 7 route shell tests verifying real TasksPage mounting on `/tasks`.
+
+---
+
+8. **Phase 5 Post-Completion Audit & E2E Verification**:
+   - **Status Semantics**: Resolved `DONE` as strict alias for `COMPLETED` in `@workaholic/shared/constants` and normalized in `tasks.service.js`. Confirmed live PostgreSQL constraint `chk_tasks_status` enforces `('TODO', 'IN_PROGRESS', 'BLOCKED', 'COMPLETED', 'CANCELLED')` with zero independent `DONE` state in database.
+   - **Today View Integration (`TM-TASK-011`)**: Integrated active task loading, dynamic Focus Task rendering, task completion toggle (`role="checkbox"`, `aria-checked`), strikethrough styling, and Completed Today section into `apps/web/src/pages/TodayPage.jsx`. Added `apps/web/tests/today.test.jsx` (4 unit/DOM tests).
+   - **Playwright E2E Browser Testing**: Configured Playwright with pure JS (`playwright.config.js`) and implemented `e2e/tasks.spec.js` (6 tests covering TM-TASK-001, 002, 003, 008, 011, 014). Verified execution in real Chromium headless browser against the Vite web application.
+
+---
+
+## Phase 5 Final Verification Matrix (Post-Audit)
+
+| Verification Check          | Scope / Command                    | Result     | Details                                        |
+| --------------------------- | ---------------------------------- | ---------- | ---------------------------------------------- |
+| **JavaScript-Only Guard**   | `npm run check:js-only`            | **PASSED** | 0 TypeScript files across whole repository     |
+| **Linter Verification**     | `npm run lint`                     | **PASSED** | 0 errors, 0 warnings across all workspaces     |
+| **Formatting Check**        | `npm run format:check`             | **PASSED** | 100% Prettier compliant                        |
+| **Shared Unit Tests**       | `packages/shared/tests/*.test.js`  | **PASSED** | 21/21 tests passed (schemas + datetime)        |
+| **Backend Test Suite**      | `apps/backend/tests/*.test.js`     | **PASSED** | 243/243 tests passed across 18 test files      |
+| **Web Test Suite**          | `apps/web/tests/*.test.jsx`        | **PASSED** | 23/23 tests passed (app shell + tasks + today) |
+| **Desktop Tests**           | `apps/desktop/tests/*.test.js`     | **PASSED** | 3/3 tests passed (security + IPC whitelist)    |
+| **Mobile Tests**            | `apps/mobile/tests/*.test.js`      | **PASSED** | 6/6 tests passed (tabs + env + API client)     |
+| **Monorepo Unit/Int Tests** | `npm test`                         | **PASSED** | **296/296 tests passed** across 24 test files  |
+| **Playwright E2E Tests**    | `npm run test:e2e`                 | **PASSED** | **7/7 tests passed** in real Chromium browser  |
+| **Web Production Build**    | `npm run build -w @workaholic/web` | **PASSED** | Production bundle generated in 1.86s           |
+| **Live PG 16 Migration**    | `migrate:up` / `migrate:down`      | **PASSED** | Verified UP, DOWN, UP on PostgreSQL 16.15      |
+
+---
+
+## Phase 5 Summary
+
+- **Phase 5 Classification**: **VERIFIED COMPLETE**
+- **Strict Invariants Preserved**: Pure JavaScript/JSX only, zero ORMs, parameterized PostgreSQL queries, zero microservices / Redis / Kafka.
+- **Cross-Phase Boundaries**: Projects & Boards (Phase 6), Calendar & Native Work Blocks (Phase 8), Recurrence (Phase 10), Reminders (Phase 11), Google Tasks (Phase 14), Google Drive (Phase 15), Notes (Phase 17), Collaboration (Phase 21) preserved cleanly as nullable extension points.

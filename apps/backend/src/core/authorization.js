@@ -87,19 +87,47 @@ export function assertResourceTenantIsolation(resource, workspaceId) {
  * @returns {Function} Fastify preHandler hook
  */
 export function requireWorkspaceAccess(options = {}) {
-  const {
-    allowedRoles,
-    minimumRole,
-    getWorkspaceId = req => req.params?.workspaceId || req.params?.id,
-    repository = workspacesRepo,
-  } = options;
+  const { allowedRoles, minimumRole, getWorkspaceId, repository = workspacesRepo } = options;
 
   return async function workspaceAccessHook(request, _reply) {
     if (!request.user) {
       throw new AuthenticationRequiredError('Authentication required');
     }
 
-    const workspaceId = getWorkspaceId(request);
+    // Respect workspace context if already established by upstream hook
+    if (request.workspace?.id && !getWorkspaceId) {
+      return;
+    }
+
+    let workspaceId;
+    if (typeof getWorkspaceId === 'function') {
+      workspaceId = await getWorkspaceId(request);
+    } else {
+      workspaceId =
+        request.headers?.['x-workspace-id'] ||
+        request.query?.workspaceId ||
+        request.params?.workspaceId ||
+        request.body?.workspaceId;
+
+      // Only treat params.id as workspaceId if the route explicitly targets workspaces
+      if (
+        !workspaceId &&
+        request.params?.id &&
+        (request.routeOptions?.url?.includes('/workspaces/') ||
+          request.routeOptions?.url?.startsWith('/workspaces/'))
+      ) {
+        workspaceId = request.params.id;
+      }
+    }
+
+    // Fallback: If no workspace explicitly provided, find user's default active workspace
+    if (!workspaceId && request.user?.id) {
+      const userWorkspaces = await repository.findWorkspacesForUser(request.user.id);
+      if (userWorkspaces && userWorkspaces.length > 0) {
+        workspaceId = userWorkspaces[0].id;
+      }
+    }
+
     if (!workspaceId) {
       throw new NotFoundError('Workspace not specified');
     }
