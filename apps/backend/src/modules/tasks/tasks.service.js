@@ -3,6 +3,9 @@ import * as labelsRepo from './labels.repository.js';
 import * as dependenciesRepo from './dependencies.repository.js';
 import * as linksRepo from './links.repository.js';
 import * as workBlocksRepo from './work-blocks.repository.js';
+import * as projectsRepo from '../projects/projects.repository.js';
+import * as boardsRepo from '../boards/boards.repository.js';
+import * as columnsRepo from '../boards/columns.repository.js';
 import { NotFoundError, ValidationError, ConflictError } from '../../core/errors.js';
 
 /**
@@ -97,12 +100,18 @@ export class TasksService {
     dependencies = dependenciesRepo,
     links = linksRepo,
     workBlocks = workBlocksRepo,
+    projects = projectsRepo,
+    boards = boardsRepo,
+    columns = columnsRepo,
   ) {
     this.repo = repo;
     this.labelsRepo = labels;
     this.dependenciesRepo = dependencies;
     this.linksRepo = links;
     this.workBlocksRepo = workBlocks;
+    this.projectsRepo = projects;
+    this.boardsRepo = boards;
+    this.columnsRepo = columns;
   }
 
   /**
@@ -132,8 +141,44 @@ export class TasksService {
       }
     }
 
+    // Validate project if provided (BR-PROJECT-001, TM-PROJECT-002)
+    if (taskData.projectId && this.projectsRepo?.findProjectById) {
+      const project = await this.projectsRepo.findProjectById(
+        taskData.projectId,
+        workspaceId,
+        client,
+      );
+      if (!project) {
+        throw new NotFoundError('Project not found in this workspace');
+      }
+    }
+
+    // Validate board if provided (BR-BOARD-002)
+    if (taskData.boardId && this.boardsRepo?.findBoardById) {
+      const board = await this.boardsRepo.findBoardById(taskData.boardId, workspaceId, client);
+      if (!board) {
+        throw new NotFoundError('Board not found in this workspace');
+      }
+    }
+
+    // Validate board column if provided (BR-BOARD-001, BR-BOARD-002)
+    let derivedStatus = taskData.status;
+    if (taskData.boardColumnId && this.columnsRepo?.findColumnById) {
+      const column = await this.columnsRepo.findColumnById(taskData.boardColumnId, client);
+      if (!column || column.workspaceId !== workspaceId) {
+        throw new NotFoundError('Board column not found in this workspace');
+      }
+      if (taskData.boardId && column.boardId !== taskData.boardId) {
+        throw new ValidationError('Board column does not belong to the specified board');
+      }
+      // If task status not explicitly provided, map to column's status_mapping
+      if (!derivedStatus && column.statusMapping) {
+        derivedStatus = column.statusMapping;
+      }
+    }
+
     const priority = normalizePriority(taskData.priority);
-    const status = normalizeStatus(taskData.status);
+    const status = normalizeStatus(derivedStatus);
 
     const task = await this.repo.createTask(
       {
@@ -254,6 +299,38 @@ export class TasksService {
       }
     }
 
+    // Validate project if updated (BR-PROJECT-001, TM-PROJECT-002)
+    if (updateData.projectId && this.projectsRepo?.findProjectById) {
+      const project = await this.projectsRepo.findProjectById(
+        updateData.projectId,
+        workspaceId,
+        client,
+      );
+      if (!project) {
+        throw new NotFoundError('Project not found in this workspace');
+      }
+    }
+
+    // Validate board if updated (BR-BOARD-002)
+    if (updateData.boardId && this.boardsRepo?.findBoardById) {
+      const board = await this.boardsRepo.findBoardById(updateData.boardId, workspaceId, client);
+      if (!board) {
+        throw new NotFoundError('Board not found in this workspace');
+      }
+    }
+
+    // Validate board column if updated (BR-BOARD-001, BR-BOARD-002)
+    if (updateData.boardColumnId && this.columnsRepo?.findColumnById) {
+      const column = await this.columnsRepo.findColumnById(updateData.boardColumnId, client);
+      if (!column || column.workspaceId !== workspaceId) {
+        throw new NotFoundError('Board column not found in this workspace');
+      }
+      const boardIdToCheck = updateData.boardId || current.boardId;
+      if (boardIdToCheck && column.boardId !== boardIdToCheck) {
+        throw new ValidationError('Board column does not belong to the specified board');
+      }
+    }
+
     const payload = { ...updateData };
     if (payload.priority) {
       payload.priority = normalizePriority(payload.priority);
@@ -273,6 +350,65 @@ export class TasksService {
     if (!updated) {
       throw new ConflictError('Task was modified concurrently. Please reload.');
     }
+
+    return {
+      ...updated,
+      isOverdue: isTaskOverdue(updated),
+    };
+  }
+
+  /**
+   * Move task between board columns (BR-BOARD-003, TM-BOARD-003, TM-BOARD-004)
+   * Automatically updates task status if column has status_mapping configured
+   */
+  async moveTaskToColumn(
+    taskId,
+    workspaceId,
+    columnId,
+    statusOverride = undefined,
+    client = undefined,
+  ) {
+    const task = await this.repo.findTaskById(
+      taskId,
+      workspaceId,
+      { includeDeleted: false },
+      client,
+    );
+    if (!task) {
+      throw new NotFoundError('Task not found');
+    }
+
+    const column = await this.columnsRepo.findColumnById(columnId, client);
+    if (!column || column.workspaceId !== workspaceId) {
+      throw new NotFoundError('Board column not found in this workspace');
+    }
+
+    let newStatus = task.status;
+    if (statusOverride) {
+      newStatus = normalizeStatus(statusOverride);
+    } else if (column.statusMapping) {
+      newStatus = column.statusMapping;
+    }
+
+    let completedAt = task.completedAt;
+    if (newStatus === 'COMPLETED' && task.status !== 'COMPLETED') {
+      completedAt = new Date().toISOString();
+    } else if (newStatus !== 'COMPLETED' && task.status === 'COMPLETED') {
+      completedAt = null;
+    }
+
+    const updated = await this.repo.updateTask(
+      taskId,
+      workspaceId,
+      {
+        boardId: column.boardId,
+        boardColumnId: column.id,
+        status: newStatus,
+        completedAt,
+      },
+      task.version,
+      client,
+    );
 
     return {
       ...updated,

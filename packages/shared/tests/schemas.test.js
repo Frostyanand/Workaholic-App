@@ -299,4 +299,80 @@ describe('@workaholic/shared core entity schemas', () => {
     });
     expect(invalidBlock.success).toBe(false);
   });
+
+  it('validates Phase 6 Project, Board, and Column schemas', async () => {
+    const {
+      PROJECT_STATUS,
+      PROJECT_ROLE,
+      createProjectSchema,
+      updateProjectSchema,
+      projectQuerySchema,
+      addProjectMemberSchema,
+      createBoardSchema,
+      createBoardColumnSchema,
+      reorderBoardColumnsSchema,
+      moveBoardTaskSchema,
+    } = await import('../src/index.js');
+
+    // 1. Project creation
+    const validProject = createProjectSchema.safeParse({
+      name: 'Alpha Project',
+      description: 'Main deliverable',
+      status: PROJECT_STATUS.ACTIVE,
+    });
+    expect(validProject.success).toBe(true);
+    expect(validProject.data.status).toBe('ACTIVE');
+
+    expect(createProjectSchema.safeParse({ name: '   ' }).success).toBe(false);
+
+    // 2. Project update
+    expect(updateProjectSchema.safeParse({ status: PROJECT_STATUS.COMPLETED }).success).toBe(true);
+
+    // 3. Project query
+    expect(projectQuerySchema.safeParse({ status: 'ACTIVE', search: 'Alpha' }).success).toBe(true);
+
+    // 4. Project member
+    expect(
+      addProjectMemberSchema.safeParse({
+        userId: '123e4567-e89b-12d3-a456-426614174000',
+        role: PROJECT_ROLE.ADMIN,
+      }).success,
+    ).toBe(true);
+    expect(addProjectMemberSchema.safeParse({ userId: 'invalid-uuid' }).success).toBe(false);
+
+    // 5. Board creation
+    expect(
+      createBoardSchema.safeParse({
+        name: 'Sprint Kanban',
+        projectId: '123e4567-e89b-12d3-a456-426614174000',
+      }).success,
+    ).toBe(true);
+    expect(createBoardSchema.safeParse({ name: '' }).success).toBe(false);
+
+    // 6. Board Column
+    expect(
+      createBoardColumnSchema.safeParse({
+        name: 'In Progress',
+        position: 1,
+        statusMapping: 'IN_PROGRESS',
+      }).success,
+    ).toBe(true);
+    expect(createBoardColumnSchema.safeParse({ name: '', position: -1 }).success).toBe(false);
+
+    // 7. Reorder Columns
+    expect(
+      reorderBoardColumnsSchema.safeParse({
+        columnIds: ['123e4567-e89b-12d3-a456-426614174000', '123e4567-e89b-12d3-a456-426614174001'],
+      }).success,
+    ).toBe(true);
+    expect(reorderBoardColumnsSchema.safeParse({ columnIds: [] }).success).toBe(false);
+
+    // 8. Move Task
+    expect(
+      moveBoardTaskSchema.safeParse({
+        columnId: '123e4567-e89b-12d3-a456-426614174000',
+        status: 'COMPLETED',
+      }).success,
+    ).toBe(true);
+  });
 });

@@ -5,6 +5,10 @@ import { AppLayout } from './components/layout/AppLayout.jsx';
 import { AuthLayout } from './components/layout/AuthLayout.jsx';
 import { TodayPage } from './pages/TodayPage.jsx';
 import { TasksPage } from './pages/TasksPage.jsx';
+import { ProjectsPage } from './pages/ProjectsPage.jsx';
+import { ProjectDetailPage } from './pages/ProjectDetailPage.jsx';
+import { BoardsPage } from './pages/BoardsPage.jsx';
+import { BoardDetailPage } from './pages/BoardDetailPage.jsx';
 import { LoginPage } from './pages/LoginPage.jsx';
 import { NotFoundPage } from './pages/NotFoundPage.jsx';
 import { PlaceholderPage } from './pages/PlaceholderPage.jsx';
@@ -17,16 +21,10 @@ export default function App() {
         <Route path="/" element={<AppLayout />}>
           <Route index element={<TodayPage />} />
           <Route path="tasks" element={<TasksPage />} />
-          <Route
-            path="boards"
-            element={
-              <PlaceholderPage
-                title="Projects & Boards"
-                phase="Phase 6"
-                description="Kanban boards, customizable columns, and visual project workflows."
-              />
-            }
-          />
+          <Route path="projects" element={<ProjectsPage />} />
+          <Route path="projects/:id" element={<ProjectDetailPage />} />
+          <Route path="boards" element={<BoardsPage />} />
+          <Route path="boards/:id" element={<BoardDetailPage />} />
           <Route
             path="calendar"
             element={

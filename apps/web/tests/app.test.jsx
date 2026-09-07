@@ -47,14 +47,48 @@ describe('Web Application Shell (Task 1.1)', () => {
 
     await act(async () => {
       root.render(
+        <MemoryRouter initialEntries={['/calendar']}>
+          <App />
+        </MemoryRouter>,
+      );
+    });
+
+    expect(container.textContent).toContain('Unified Calendar');
+    expect(container.textContent).toContain('Phase 8');
+  });
+
+  it('renders projects interface at /projects (Phase 6)', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(
+        <MemoryRouter initialEntries={['/projects']}>
+          <App />
+        </MemoryRouter>,
+      );
+    });
+
+    expect(container.textContent).toContain('Projects');
+    expect(container.textContent).toContain('New Project');
+  });
+
+  it('renders boards interface at /boards (Phase 6)', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(
         <MemoryRouter initialEntries={['/boards']}>
           <App />
         </MemoryRouter>,
       );
     });
 
-    expect(container.textContent).toContain('Projects & Boards');
-    expect(container.textContent).toContain('Phase 6');
+    expect(container.textContent).toContain('Boards');
+    expect(container.textContent).toContain('Create Board');
   });
 
   it('renders task management interface at /tasks (Task 5.21)', async () => {

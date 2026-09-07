@@ -5,6 +5,8 @@ import {
   ERROR_CODE,
   DEPENDENCY_TYPE,
   TASK_LINK_TYPE,
+  PROJECT_STATUS,
+  PROJECT_ROLE,
 } from '../constants/index.js';
 
 export const idSchema = z.string().uuid({ message: 'Invalid UUID identifier' });
@@ -63,6 +65,7 @@ export const taskQuerySchema = z.object({
   assignedTo: z.string().uuid().optional(),
   projectId: z.string().uuid().optional(),
   boardId: z.string().uuid().optional(),
+  boardColumnId: z.string().uuid().optional(),
   overdue: z
     .union([z.boolean(), z.enum(['true', 'false'])])
     .transform(val => val === true || val === 'true')
@@ -274,4 +277,90 @@ export const securityEventsQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(100).default(20),
   offset: z.coerce.number().int().nonnegative().default(0),
   eventType: z.string().optional(),
+});
+
+// Project Schemas (Phase 6)
+export const createProjectSchema = z.object({
+  name: z
+    .string({ required_error: 'Project name is required' })
+    .trim()
+    .min(1, 'Project name cannot be empty')
+    .max(255, 'Project name must not exceed 255 characters'),
+  description: z.string().trim().max(10000).nullable().optional(),
+  status: z.nativeEnum(PROJECT_STATUS).default(PROJECT_STATUS.ACTIVE),
+  ownerUserId: z.string().uuid().nullable().optional(),
+  startAt: z
+    .string()
+    .datetime({ message: 'startAt must be a valid ISO 8601 string' })
+    .nullable()
+    .optional(),
+  dueAt: z
+    .string()
+    .datetime({ message: 'dueAt must be a valid ISO 8601 string' })
+    .nullable()
+    .optional(),
+});
+
+export const updateProjectSchema = createProjectSchema.partial();
+
+export const projectQuerySchema = z.object({
+  status: z.string().optional(),
+  search: z.string().trim().max(255).optional(),
+  sort: z
+    .enum(['created_at', 'updated_at', 'name', 'due_at', 'createdAt', 'updatedAt', 'dueAt'])
+    .default('created_at'),
+  order: z.enum(['asc', 'desc', 'ASC', 'DESC']).default('desc'),
+  limit: z.coerce.number().int().positive().max(100).default(50),
+  offset: z.coerce.number().int().nonnegative().default(0),
+});
+
+export const addProjectMemberSchema = z.object({
+  userId: z.string().uuid({ message: 'Valid user ID is required' }),
+  role: z.nativeEnum(PROJECT_ROLE).default(PROJECT_ROLE.MEMBER),
+});
+
+// Board Schemas (Phase 6)
+export const createBoardSchema = z.object({
+  name: z
+    .string({ required_error: 'Board name is required' })
+    .trim()
+    .min(1, 'Board name cannot be empty')
+    .max(255, 'Board name must not exceed 255 characters'),
+  description: z.string().trim().max(10000).nullable().optional(),
+  projectId: z.string().uuid().nullable().optional(),
+});
+
+export const updateBoardSchema = createBoardSchema.partial();
+
+export const boardQuerySchema = z.object({
+  projectId: z.string().uuid().optional(),
+  search: z.string().trim().max(255).optional(),
+  sort: z
+    .enum(['created_at', 'updated_at', 'name', 'createdAt', 'updatedAt'])
+    .default('created_at'),
+  order: z.enum(['asc', 'desc', 'ASC', 'DESC']).default('desc'),
+  limit: z.coerce.number().int().positive().max(100).default(50),
+  offset: z.coerce.number().int().nonnegative().default(0),
+});
+
+// Board Column Schemas (Phase 6)
+export const createBoardColumnSchema = z.object({
+  name: z
+    .string({ required_error: 'Column name is required' })
+    .trim()
+    .min(1, 'Column name cannot be empty')
+    .max(100, 'Column name must not exceed 100 characters'),
+  position: z.coerce.number().int().nonnegative().optional(),
+  statusMapping: z.nativeEnum(TASK_STATUS).nullable().optional(),
+});
+
+export const updateBoardColumnSchema = createBoardColumnSchema.partial();
+
+export const reorderBoardColumnsSchema = z.object({
+  columnIds: z.array(z.string().uuid()).min(1, 'At least one column ID is required'),
+});
+
+export const moveBoardTaskSchema = z.object({
+  columnId: z.string().uuid({ message: 'Valid column ID is required' }),
+  status: z.nativeEnum(TASK_STATUS).optional(),
 });

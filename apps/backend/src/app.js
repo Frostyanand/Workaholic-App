@@ -11,6 +11,8 @@ import { authRoutes } from './modules/auth/auth.routes.js';
 import { usersRoutes } from './modules/users/users.routes.js';
 import { workspacesRoutes } from './modules/workspaces/workspaces.routes.js';
 import { tasksRoutes } from './modules/tasks/tasks.routes.js';
+import { projectsRoutes } from './modules/projects/projects.routes.js';
+import { boardsRoutes, columnsRoutes } from './modules/boards/boards.routes.js';
 import { calendarRoutes } from './modules/calendar/calendar.routes.js';
 import { notesRoutes } from './modules/notes/notes.routes.js';
 
@@ -104,6 +106,9 @@ export function createApp(opts = {}) {
   app.register(usersRoutes, { prefix: '/api/v1/users' });
   app.register(workspacesRoutes, { prefix: '/api/v1/workspaces' });
   app.register(tasksRoutes, { prefix: '/api/v1/tasks' });
+  app.register(projectsRoutes, { prefix: '/api/v1/projects' });
+  app.register(boardsRoutes, { prefix: '/api/v1/boards' });
+  app.register(columnsRoutes, { prefix: '/api/v1/columns' });
   app.register(calendarRoutes, { prefix: '/api/v1/calendar' });
   app.register(notesRoutes, { prefix: '/api/v1/notes' });
 

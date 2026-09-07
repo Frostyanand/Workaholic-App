@@ -3,6 +3,7 @@ import { NavLink, Outlet } from 'react-router-dom';
 import {
   LayoutDashboard,
   CheckSquare,
+  FolderGit2,
   Kanban,
   Calendar,
   GraduationCap,
@@ -15,6 +16,7 @@ import { ErrorBoundary } from '../common/ErrorBoundary.jsx';
 const navItems = [
   { to: '/', label: 'Today', icon: LayoutDashboard },
   { to: '/tasks', label: 'Tasks', icon: CheckSquare },
+  { to: '/projects', label: 'Projects', icon: FolderGit2 },
   { to: '/boards', label: 'Boards', icon: Kanban },
   { to: '/calendar', label: 'Calendar', icon: Calendar },
   { to: '/academic', label: 'Academic', icon: GraduationCap },

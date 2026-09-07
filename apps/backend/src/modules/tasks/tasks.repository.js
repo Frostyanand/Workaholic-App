@@ -191,6 +191,11 @@ export async function listTasks(
     params.push(filters.boardId);
   }
 
+  if (filters.boardColumnId) {
+    conditions.push(`t.board_column_id = $${paramIndex++}`);
+    params.push(filters.boardColumnId);
+  }
+
   if (filters.overdue === true) {
     conditions.push(
       `t.status NOT IN ('COMPLETED', 'CANCELLED') AND t.due_at IS NOT NULL AND t.due_at < NOW()`,

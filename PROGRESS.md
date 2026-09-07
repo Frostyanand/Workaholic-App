@@ -2,10 +2,10 @@
 
 ## Status Overview
 
-- **Current Phase**: Phase 4 — Authentication and Identity (COMPLETED & VERIFIED)
-- **Current Task**: Phase 4 Complete — Ready for Phase 5
-- **Overall Project Status**: Phase 0, Phase 1, Phase 2, Phase 3 & Phase 4 Complete
-- **Last Updated**: 2026-09-06
+- **Current Phase**: Phase 6 — Projects & Boards (COMPLETED & VERIFIED)
+- **Current Task**: Phase 6 Complete — Ready for Phase 7
+- **Overall Project Status**: Phase 0, Phase 1, Phase 2, Phase 3, Phase 4, Phase 5 & Phase 6 Complete
+- **Last Updated**: 2026-09-07
 - **Architecture Invariant**: JavaScript/JSX ONLY (zero TypeScript, zero ORMs, PostgreSQL authoritative, React 18.2.0 baseline)
 
 ---
@@ -773,3 +773,103 @@ All quality gates and live database tests pass:
 - **Phase 5 Classification**: **VERIFIED COMPLETE**
 - **Strict Invariants Preserved**: Pure JavaScript/JSX only, zero ORMs, parameterized PostgreSQL queries, zero microservices / Redis / Kafka.
 - **Cross-Phase Boundaries**: Projects & Boards (Phase 6), Calendar & Native Work Blocks (Phase 8), Recurrence (Phase 10), Reminders (Phase 11), Google Tasks (Phase 14), Google Drive (Phase 15), Notes (Phase 17), Collaboration (Phase 21) preserved cleanly as nullable extension points.
+
+---
+
+## Phase 6: Projects & Boards
+
+### Completed Tasks
+
+1. **Task 6.1 — Project Domain Foundation**:
+   - Schema & Migrations: `migrations/1725628805000_create_project_and_board_tables.sql` establishing `projects` and `project_members` tables with UUID primary keys, workspace-scoped foreign keys (`ON DELETE CASCADE`), lifecycle statuses (`ACTIVE`, `ON_HOLD`, `COMPLETED`, `ARCHIVED`, `CANCELLED`), check constraints, and soft-delete support (`deleted_at`).
+   - Repository: `apps/backend/src/modules/projects/projects.repository.js` providing parameterized PostgreSQL queries for CRUD, tenant isolation, search (`ILIKE`), status filtering, pagination, and task count aggregations.
+   - Service: `apps/backend/src/modules/projects/projects.service.js` enforcing domain invariants, start/due date consistency (`dueAt >= startAt`), and transaction boundaries.
+
+2. **Task 6.2 — Project REST API Surface**:
+   - Routes: `apps/backend/src/modules/projects/projects.routes.js` conforming to `docs/15.API-SPECIFICATION.md` Section 35:
+     - `GET /api/v1/projects`: List projects with status, search, and ordering filters.
+     - `POST /api/v1/projects`: Create project in workspace context.
+     - `GET /api/v1/projects/:id`: Get single project with aggregated task metrics.
+     - `PATCH /api/v1/projects/:id`: Update project details.
+     - `DELETE /api/v1/projects/:id`: Soft-delete project (unlinking tasks via `ON DELETE SET NULL`).
+     - `POST /api/v1/projects/:id/restore`: Restore soft-deleted project.
+     - `GET / POST / DELETE /api/v1/projects/:id/members`: Project member access control.
+   - Tests: Unit tests (`apps/backend/tests/projects.test.js`) and live PostgreSQL 16 tests (`apps/backend/tests/projects-live.test.js`).
+
+3. **Task 6.3 & 6.4 — Board & Column Domain Foundation**:
+   - Schema & Migrations: Created `boards` and `board_columns` tables with unique position constraints (`uq_board_columns_position UNIQUE(board_id, position)`), non-negative check constraints, and soft-delete support.
+   - Automatic Column Provisioning: Creating a board automatically seeds deterministic default columns: To Do (`position: 0`, `TODO`), In Progress (`position: 1`, `IN_PROGRESS`), Done (`position: 2`, `COMPLETED`).
+   - Reordering Engine: Offset-based two-phase reordering prevents intermediate unique constraint collisions during drag-and-drop or column movement.
+   - Repositories & Services: `boards.repository.js`, `columns.repository.js`, `boards.service.js`.
+
+4. **Task 6.5 — Task ↔ Project / Board Integration**:
+   - Foreign Keys: `tasks.project_id`, `tasks.board_id`, `tasks.board_column_id` wired with `ON DELETE SET NULL` preventing task invalidation when projects/boards/columns are removed.
+   - Task Moving & Status Transitions (`moveTaskToColumn`): Moving a task to a column automatically updates `board_column_id` and deterministically transitions status to column's `status_mapping` with appropriate `completed_at` timestamps.
+   - Task Independence: Task descriptions, priorities, subtasks, dependencies, and standalone completion lifecycle remain strictly preserved.
+
+5. **Task 6.6 — Board REST API Surface**:
+   - Routes: `apps/backend/src/modules/boards/boards.routes.js` conforming to `docs/15.API-SPECIFICATION.md` Section 36:
+     - `GET /api/v1/boards`: List workspace boards, optionally filtered by project.
+     - `POST /api/v1/boards`: Create board (with auto-provisioned default columns).
+     - `GET /api/v1/boards/:id`: Retrieve board with ordered columns.
+     - `PATCH / DELETE / POST restore /api/v1/boards/:id`: Board lifecycle operations.
+     - `GET /api/v1/boards/:id/tasks`: List tasks grouped/assigned to board.
+     - `POST /api/v1/boards/:id/columns`: Create custom column.
+     - `PATCH / DELETE /api/v1/boards/:id/columns/:columnId`: Update / delete column.
+     - `PUT /api/v1/boards/:id/columns/reorder`: Deterministic column reordering.
+     - `POST /api/v1/boards/:id/tasks/:taskId/move`: Move task between columns.
+
+6. **Task 6.7 to 6.9 — Web UI & Kanban Interaction (`apps/web`)**:
+   - Pages:
+     - `ProjectsPage.jsx`: Project grid, search, status filters (Active, On Hold, Completed, Archived), progress bars (`completed / total tasks`), and creation modal.
+     - `ProjectDetailPage.jsx`: Project header, progress gauge, edit/delete actions, and tabbed view (Tasks, Boards, Members).
+     - `BoardsPage.jsx`: Board card overview, project filter, and board creation trigger.
+     - `BoardDetailPage.jsx`: Full-screen Kanban cockpit, task quick-add, column reordering, task detail drawer integration, and empty board handling (`TM-BOARD-007`).
+   - Kanban Components:
+     - `KanbanBoard.jsx`: Horizontal scrollable board container with column reordering.
+     - `KanbanColumn.jsx`: Column header, badge counter, drop target, quick-add task, move left/right controls.
+     - `KanbanCard.jsx`: Dual interaction support: HTML5 drag-and-drop plus keyboard-accessible non-drag dropdown alternative (`Move column` per `UX-T09`).
+     - Modals: `CreateProjectModal.jsx`, `CreateBoardModal.jsx`, `CreateColumnModal.jsx`.
+
+7. **Task 6.10 — Playwright End-to-End Test Suite (`e2e/projects-boards.spec.js`)**:
+   - Implemented 8 dedicated user journeys covering all Phase 6 test matrix requirements:
+     - `TM-PROJECT-001` (E2E): User can create a project via UI modal.
+     - `TM-PROJECT-002` (E2E): User can view and associate tasks with projects.
+     - `TM-PROJECT-004` (E2E): Project deletion unlinks tasks without deleting them.
+     - `TM-BOARD-001` (E2E): User can create a board with default columns.
+     - `TM-BOARD-002` (E2E): User can create custom columns on a board.
+     - `TM-BOARD-003 & TM-BOARD-004` (E2E): Task movement updates column and status.
+     - `TM-BOARD-007` (E2E): Empty board displays dedicated empty state and add column trigger.
+     - `TM-BOARD-008` (E2E): Large board with multiple columns and 30+ tasks remains performant.
+
+8. **Task 6.11 to 6.13 — Live PostgreSQL Verification, Security Audit & Regression Check**:
+   - Migrated on live PostgreSQL 16.15 with full UP/DOWN verification.
+   - Cross-workspace tenant isolation and IDOR checks verified.
+   - All Phase 5 task management functionality verified 100% intact.
+
+---
+
+## Phase 6 Final Verification Matrix
+
+| Verification Check          | Scope / Command                    | Result     | Details                                         |
+| --------------------------- | ---------------------------------- | ---------- | ----------------------------------------------- |
+| **JavaScript-Only Guard**   | `npm run check:js-only`            | **PASSED** | 0 TypeScript files across whole repository      |
+| **Linter Verification**     | `npm run lint`                     | **PASSED** | 0 errors, 0 warnings across all workspaces      |
+| **Formatting Check**        | `npm run format:check`             | **PASSED** | 100% Prettier compliant                         |
+| **Shared Unit Tests**       | `packages/shared/tests/*.test.js`  | **PASSED** | 22/22 tests passed (schemas + datetime)         |
+| **Backend Test Suite**      | `apps/backend/tests/*.test.js`     | **PASSED** | 272/272 tests passed across 22 test files       |
+| **Web Test Suite**          | `apps/web/tests/*.test.jsx`        | **PASSED** | 39/39 tests passed across 5 test files          |
+| **Desktop Tests**           | `apps/desktop/tests/*.test.js`     | **PASSED** | 3/3 tests passed (security + IPC whitelist)     |
+| **Mobile Tests**            | `apps/mobile/tests/*.test.js`      | **PASSED** | 6/6 tests passed (tabs + env + API client)      |
+| **Monorepo Unit/Int Tests** | `npm test`                         | **PASSED** | **342/342 tests passed** across 30 test files   |
+| **Playwright E2E Tests**    | `npm run test:e2e`                 | **PASSED** | **15/15 tests passed** in real Chromium browser |
+| **Web Production Build**    | `npm run build -w @workaholic/web` | **PASSED** | Production bundle generated with 0 errors       |
+| **Live PG 16 Migration**    | `migrate:up` / `migrate:down`      | **PASSED** | Verified UP, DOWN, UP on PostgreSQL 16.15       |
+
+---
+
+## Phase 6 Summary
+
+- **Phase 6 Classification**: **VERIFIED COMPLETE**
+- **Strict Invariants Preserved**: Pure JavaScript/JSX only, zero ORMs, parameterized PostgreSQL queries, zero microservices / Redis / Kafka.
+- **Scope Containment**: Phase 7 and later features (Calendar, Recurrence, Reminders, Google Drive, Notes, Collaboration, Offline Sync) strictly deferred; clean nullable extension points preserved.

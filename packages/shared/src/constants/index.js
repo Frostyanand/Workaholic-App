@@ -129,3 +129,18 @@ export const JOB_STATUS = Object.freeze({
   FAILED: 'FAILED',
   CANCELLED: 'CANCELLED',
 });
+
+export const PROJECT_STATUS = Object.freeze({
+  ACTIVE: 'ACTIVE',
+  ON_HOLD: 'ON_HOLD',
+  COMPLETED: 'COMPLETED',
+  ARCHIVED: 'ARCHIVED',
+  CANCELLED: 'CANCELLED',
+});
+
+export const PROJECT_ROLE = Object.freeze({
+  OWNER: 'OWNER',
+  ADMIN: 'ADMIN',
+  MEMBER: 'MEMBER',
+  VIEWER: 'VIEWER',
+});

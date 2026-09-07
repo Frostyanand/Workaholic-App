@@ -1,7 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, AlertCircle } from 'lucide-react';
 
-export function CreateTaskModal({ isOpen, onClose, onCreateTask }) {
+export function CreateTaskModal({
+  isOpen,
+  onClose,
+  onCreateTask,
+  initialProjectId = null,
+  initialBoardId = null,
+  initialBoardColumnId = null,
+}) {
   const [title, setTitle] = useState('');
   const [priority, setPriority] = useState('P3');
   const [dueAt, setDueAt] = useState('');
@@ -44,6 +51,9 @@ export function CreateTaskModal({ isOpen, onClose, onCreateTask }) {
         description: description.trim() || undefined,
         dueAt: dueAt ? new Date(dueAt).toISOString() : undefined,
         estimatedDuration: estimatedDuration ? parseInt(estimatedDuration, 10) : undefined,
+        projectId: initialProjectId || undefined,
+        boardId: initialBoardId || undefined,
+        boardColumnId: initialBoardColumnId || undefined,
       };
       await onCreateTask(payload);
       onClose();
