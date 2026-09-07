@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, AlertCircle } from 'lucide-react';
+import { Modal } from '../common/Modal.jsx';
+import { Button } from '../common/Button.jsx';
+import { ErrorBanner } from '../common/ErrorBanner.jsx';
 
 export function CreateTaskModal({
   isOpen,
@@ -28,11 +30,8 @@ export function CreateTaskModal({
       setDescription('');
       setError(null);
       setSubmitting(false);
-      setTimeout(() => titleInputRef.current?.focus(), 50);
     }
   }, [isOpen]);
-
-  if (!isOpen) return null;
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -64,103 +63,68 @@ export function CreateTaskModal({
     }
   }
 
-  function handleKeyDown(e) {
-    if (e.key === 'Escape') {
-      e.stopPropagation();
-      onClose();
-    }
-  }
-
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="create-task-modal-title"
-      onKeyDown={handleKeyDown}
-      style={{
-        position: 'fixed',
-        inset: 0,
-        backgroundColor: 'rgba(0, 0, 0, 0.75)',
-        backdropFilter: 'blur(4px)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 999,
-        padding: '16px',
-      }}
-      onClick={e => {
-        if (e.target === e.currentTarget) onClose();
-      }}
+    <Modal
+      isOpen={isOpen}
+      onClose={submitting ? () => {} : onClose}
+      title="Create New Task"
+      titleId="create-task-modal-title"
+      maxWidth="520px"
+      initialFocusRef={titleInputRef}
+      showCloseButton={!submitting}
     >
-      <div
-        style={{
-          backgroundColor: 'var(--bg-secondary)',
-          border: '1px solid var(--border-strong)',
-          borderRadius: 'var(--radius-lg)',
-          width: '100%',
-          maxWidth: '520px',
-          boxShadow: 'var(--shadow-md)',
-          overflow: 'hidden',
-        }}
-      >
-        {/* Modal Header */}
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            padding: '18px 24px',
-            borderBottom: '1px solid var(--border-subtle)',
-          }}
-        >
-          <h3
-            id="create-task-modal-title"
+      <form onSubmit={handleSubmit}>
+        <ErrorBanner message={error} onDismiss={() => setError(null)} />
+
+        {/* Title Input */}
+        <div style={{ marginBottom: '16px' }}>
+          <label
+            htmlFor="task-title-input"
             style={{
-              fontSize: '1.15rem',
-              fontWeight: 600,
-              color: 'var(--text-primary)',
-              margin: 0,
+              display: 'block',
+              fontSize: '0.85rem',
+              fontWeight: 500,
+              color: 'var(--text-secondary)',
+              marginBottom: '6px',
             }}
           >
-            Create New Task
-          </h3>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close dialog"
-            style={{ color: 'var(--text-muted)', padding: '4px', borderRadius: '4px' }}
-          >
-            <X size={20} />
-          </button>
+            Task Title <span style={{ color: 'var(--accent-danger)' }}>*</span>
+          </label>
+          <input
+            id="task-title-input"
+            ref={titleInputRef}
+            type="text"
+            value={title}
+            onChange={e => setTitle(e.target.value)}
+            placeholder="What actionable work needs to be done?"
+            disabled={submitting}
+            aria-invalid={!!error}
+            style={{
+              width: '100%',
+              padding: '10px 14px',
+              backgroundColor: 'var(--bg-surface)',
+              border: error ? '1px solid var(--accent-danger)' : '1px solid var(--border-subtle)',
+              borderRadius: 'var(--radius-sm)',
+              color: 'var(--text-primary)',
+              fontSize: '0.95rem',
+              outline: 'none',
+              boxSizing: 'border-box',
+            }}
+          />
         </div>
 
-        {/* Form Body */}
-        <form onSubmit={handleSubmit} style={{ padding: '24px' }}>
-          {error && (
-            <div
-              role="alert"
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                padding: '10px 14px',
-                backgroundColor: 'rgba(239, 68, 68, 0.15)',
-                border: '1px solid rgba(239, 68, 68, 0.3)',
-                borderRadius: 'var(--radius-sm)',
-                color: 'var(--accent-danger)',
-                fontSize: '0.85rem',
-                marginBottom: '16px',
-              }}
-            >
-              <AlertCircle size={16} />
-              <span>{error}</span>
-            </div>
-          )}
-
-          {/* Title Input */}
-          <div style={{ marginBottom: '16px' }}>
+        {/* Priority & Due Date Row */}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '1fr 1fr',
+            gap: '14px',
+            marginBottom: '16px',
+          }}
+        >
+          <div>
             <label
-              htmlFor="task-title-input"
+              htmlFor="task-priority-select"
               style={{
                 display: 'block',
                 fontSize: '0.85rem',
@@ -169,127 +133,12 @@ export function CreateTaskModal({
                 marginBottom: '6px',
               }}
             >
-              Task Title <span style={{ color: 'var(--accent-danger)' }}>*</span>
+              Priority
             </label>
-            <input
-              id="task-title-input"
-              ref={titleInputRef}
-              type="text"
-              value={title}
-              onChange={e => setTitle(e.target.value)}
-              placeholder="What actionable work needs to be done?"
-              disabled={submitting}
-              style={{
-                width: '100%',
-                padding: '10px 14px',
-                backgroundColor: 'var(--bg-surface)',
-                border: '1px solid var(--border-subtle)',
-                borderRadius: 'var(--radius-sm)',
-                color: 'var(--text-primary)',
-                fontSize: '0.95rem',
-              }}
-            />
-          </div>
-
-          {/* Priority & Due Date Row */}
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: '1fr 1fr',
-              gap: '14px',
-              marginBottom: '16px',
-            }}
-          >
-            <div>
-              <label
-                htmlFor="task-priority-select"
-                style={{
-                  display: 'block',
-                  fontSize: '0.85rem',
-                  fontWeight: 500,
-                  color: 'var(--text-secondary)',
-                  marginBottom: '6px',
-                }}
-              >
-                Priority
-              </label>
-              <select
-                id="task-priority-select"
-                value={priority}
-                onChange={e => setPriority(e.target.value)}
-                disabled={submitting}
-                style={{
-                  width: '100%',
-                  padding: '9px 12px',
-                  backgroundColor: 'var(--bg-surface)',
-                  border: '1px solid var(--border-subtle)',
-                  borderRadius: 'var(--radius-sm)',
-                  color: 'var(--text-primary)',
-                  fontSize: '0.9rem',
-                }}
-              >
-                <option value="P0">P0 - Critical</option>
-                <option value="P1">P1 - Urgent</option>
-                <option value="P2">P2 - High</option>
-                <option value="P3">P3 - Medium</option>
-                <option value="P4">P4 - Low</option>
-              </select>
-            </div>
-
-            <div>
-              <label
-                htmlFor="task-due-date-input"
-                style={{
-                  display: 'block',
-                  fontSize: '0.85rem',
-                  fontWeight: 500,
-                  color: 'var(--text-secondary)',
-                  marginBottom: '6px',
-                }}
-              >
-                Due Date & Time
-              </label>
-              <input
-                id="task-due-date-input"
-                type="datetime-local"
-                value={dueAt}
-                onChange={e => setDueAt(e.target.value)}
-                disabled={submitting}
-                style={{
-                  width: '100%',
-                  padding: '8px 12px',
-                  backgroundColor: 'var(--bg-surface)',
-                  border: '1px solid var(--border-subtle)',
-                  borderRadius: 'var(--radius-sm)',
-                  color: 'var(--text-primary)',
-                  fontSize: '0.85rem',
-                }}
-              />
-            </div>
-          </div>
-
-          {/* Estimated Duration */}
-          <div style={{ marginBottom: '16px' }}>
-            <label
-              htmlFor="task-duration-input"
-              style={{
-                display: 'block',
-                fontSize: '0.85rem',
-                fontWeight: 500,
-                color: 'var(--text-secondary)',
-                marginBottom: '6px',
-              }}
-            >
-              Estimated Duration (minutes)
-            </label>
-            <input
-              id="task-duration-input"
-              type="number"
-              min="0"
-              step="15"
-              value={estimatedDuration}
-              onChange={e => setEstimatedDuration(e.target.value)}
-              placeholder="e.g. 60"
+            <select
+              id="task-priority-select"
+              value={priority}
+              onChange={e => setPriority(e.target.value)}
               disabled={submitting}
               style={{
                 width: '100%',
@@ -299,14 +148,20 @@ export function CreateTaskModal({
                 borderRadius: 'var(--radius-sm)',
                 color: 'var(--text-primary)',
                 fontSize: '0.9rem',
+                boxSizing: 'border-box',
               }}
-            />
+            >
+              <option value="P0">P0 - Critical</option>
+              <option value="P1">P1 - Urgent</option>
+              <option value="P2">P2 - High</option>
+              <option value="P3">P3 - Medium</option>
+              <option value="P4">P4 - Low</option>
+            </select>
           </div>
 
-          {/* Description */}
-          <div style={{ marginBottom: '24px' }}>
+          <div>
             <label
-              htmlFor="task-description-input"
+              htmlFor="task-due-date-input"
               style={{
                 display: 'block',
                 fontSize: '0.85rem',
@@ -315,73 +170,118 @@ export function CreateTaskModal({
                 marginBottom: '6px',
               }}
             >
-              Description (Optional)
+              Due Date & Time
             </label>
-            <textarea
-              id="task-description-input"
-              rows={3}
-              value={description}
-              onChange={e => setDescription(e.target.value)}
-              placeholder="Additional details, scope, or reference links..."
+            <input
+              id="task-due-date-input"
+              type="datetime-local"
+              value={dueAt}
+              onChange={e => setDueAt(e.target.value)}
               disabled={submitting}
               style={{
                 width: '100%',
-                padding: '10px 14px',
+                padding: '8px 12px',
                 backgroundColor: 'var(--bg-surface)',
                 border: '1px solid var(--border-subtle)',
                 borderRadius: 'var(--radius-sm)',
                 color: 'var(--text-primary)',
-                fontSize: '0.9rem',
-                resize: 'vertical',
+                fontSize: '0.85rem',
+                boxSizing: 'border-box',
               }}
             />
           </div>
+        </div>
 
-          {/* Buttons */}
-          <div
+        {/* Estimated Duration */}
+        <div style={{ marginBottom: '16px' }}>
+          <label
+            htmlFor="task-duration-input"
             style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'flex-end',
-              gap: '12px',
+              display: 'block',
+              fontSize: '0.85rem',
+              fontWeight: 500,
+              color: 'var(--text-secondary)',
+              marginBottom: '6px',
             }}
           >
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={submitting}
-              style={{
-                padding: '9px 18px',
-                backgroundColor: 'transparent',
-                border: '1px solid var(--border-subtle)',
-                borderRadius: 'var(--radius-sm)',
-                color: 'var(--text-secondary)',
-                fontSize: '0.9rem',
-                fontWeight: 500,
-              }}
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={submitting}
-              style={{
-                padding: '9px 22px',
-                backgroundColor: 'var(--accent-primary)',
-                border: 'none',
-                borderRadius: 'var(--radius-sm)',
-                color: '#ffffff',
-                fontSize: '0.9rem',
-                fontWeight: 600,
-                boxShadow: 'var(--shadow-sm)',
-                opacity: submitting ? 0.7 : 1,
-              }}
-            >
-              {submitting ? 'Creating...' : 'Create Task'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+            Estimated Duration (minutes)
+          </label>
+          <input
+            id="task-duration-input"
+            type="number"
+            min="0"
+            step="15"
+            value={estimatedDuration}
+            onChange={e => setEstimatedDuration(e.target.value)}
+            placeholder="e.g. 60"
+            disabled={submitting}
+            style={{
+              width: '100%',
+              padding: '9px 12px',
+              backgroundColor: 'var(--bg-surface)',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: 'var(--radius-sm)',
+              color: 'var(--text-primary)',
+              fontSize: '0.9rem',
+              boxSizing: 'border-box',
+            }}
+          />
+        </div>
+
+        {/* Description */}
+        <div style={{ marginBottom: '24px' }}>
+          <label
+            htmlFor="task-description-input"
+            style={{
+              display: 'block',
+              fontSize: '0.85rem',
+              fontWeight: 500,
+              color: 'var(--text-secondary)',
+              marginBottom: '6px',
+            }}
+          >
+            Description (Optional)
+          </label>
+          <textarea
+            id="task-description-input"
+            rows={3}
+            value={description}
+            onChange={e => setDescription(e.target.value)}
+            placeholder="Additional details, scope, or reference links..."
+            disabled={submitting}
+            style={{
+              width: '100%',
+              padding: '10px 14px',
+              backgroundColor: 'var(--bg-surface)',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: 'var(--radius-sm)',
+              color: 'var(--text-primary)',
+              fontSize: '0.9rem',
+              resize: 'vertical',
+              boxSizing: 'border-box',
+            }}
+          />
+        </div>
+
+        {/* Buttons */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'flex-end',
+            gap: '10px',
+            paddingTop: '16px',
+            borderTop: '1px solid var(--border-subtle)',
+          }}
+        >
+          <Button variant="secondary" onClick={onClose} disabled={submitting}>
+            Cancel
+          </Button>
+          <Button type="submit" variant="primary" isLoading={submitting}>
+            {submitting ? 'Creating...' : 'Create Task'}
+          </Button>
+        </div>
+      </form>
+    </Modal>
   );
 }

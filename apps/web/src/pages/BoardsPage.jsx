@@ -1,13 +1,21 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Kanban, Plus, Search, FolderGit2, Trash2, AlertCircle, ExternalLink } from 'lucide-react';
+import { Kanban, Plus, Search, FolderGit2, Trash2, ExternalLink } from 'lucide-react';
 import { LoadingSpinner } from '../components/common/LoadingSpinner.jsx';
+import { PageHeader } from '../components/common/PageHeader.jsx';
+import { EmptyState } from '../components/common/EmptyState.jsx';
+import { ErrorBanner } from '../components/common/ErrorBanner.jsx';
+import { Button } from '../components/common/Button.jsx';
+import { Badge } from '../components/common/Badge.jsx';
+import { ConfirmDialog } from '../components/common/ConfirmDialog.jsx';
+import { useToast } from '../components/common/ToastContext.jsx';
 import { CreateBoardModal } from '../components/boards/CreateBoardModal.jsx';
 import * as boardsApi from '../services/boards.api.js';
 import * as projectsApi from '../services/projects.api.js';
 
 export function BoardsPage() {
   const navigate = useNavigate();
+  const { toast } = useToast();
   const [boards, setBoards] = useState([]);
   const [projects, setProjects] = useState([]);
   const [selectedProjectId, setSelectedProjectId] = useState('');
@@ -15,6 +23,8 @@ export function BoardsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [boardToDelete, setBoardToDelete] = useState(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
@@ -41,83 +51,54 @@ export function BoardsPage() {
   }, [loadData]);
 
   async function handleCreateBoard(boardData) {
-    const created = await boardsApi.createBoard(null, boardData);
-    setBoards(prev => [created, ...prev]);
-    navigate(`/boards/${created.id}`);
+    try {
+      const created = await boardsApi.createBoard(null, boardData);
+      setBoards(prev => [created, ...prev]);
+      toast.success('Board created successfully');
+      navigate(`/boards/${created.id}`);
+    } catch (err) {
+      toast.error(err.message || 'Failed to create board');
+      throw err;
+    }
   }
 
-  async function handleDeleteBoard(id, e) {
-    e.stopPropagation();
-    if (!window.confirm('Are you sure you want to delete this board?')) return;
+  async function handleConfirmDelete() {
+    if (!boardToDelete) return;
     try {
-      await boardsApi.deleteBoard(id);
-      setBoards(prev => prev.filter(b => b.id !== id));
+      setIsDeleting(true);
+      await boardsApi.deleteBoard(boardToDelete.id);
+      setBoards(prev => prev.filter(b => b.id !== boardToDelete.id));
+      toast.success('Board deleted successfully');
+      setBoardToDelete(null);
     } catch (err) {
-      alert(err.message || 'Failed to delete board');
+      toast.error(err.message || 'Failed to delete board');
+    } finally {
+      setIsDeleting(false);
     }
   }
 
   return (
-    <main
-      id="main-content"
+    <div
       style={{
         flex: 1,
-        padding: '32px 40px',
+        padding: '24px 28px',
         overflowY: 'auto',
         backgroundColor: 'var(--bg-primary)',
+        boxSizing: 'border-box',
       }}
     >
-      {/* Header */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          marginBottom: '28px',
-        }}
-      >
-        <div>
-          <h1
-            style={{
-              fontSize: '1.75rem',
-              fontWeight: 700,
-              color: 'var(--text-primary)',
-              letterSpacing: '-0.02em',
-              margin: '0 0 6px 0',
-            }}
-          >
-            Boards
-          </h1>
-          <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)', margin: 0 }}>
-            Visual Kanban boards, customizable workflow columns, and progress tracking.
-          </p>
-        </div>
+      {/* Standardized PageHeader */}
+      <PageHeader
+        title="Boards"
+        description="Visual Kanban boards, customizable workflow columns, and progress tracking."
+        actions={
+          <Button variant="primary" icon={Plus} onClick={() => setIsCreateModalOpen(true)}>
+            Create Board
+          </Button>
+        }
+      />
 
-        <button
-          type="button"
-          onClick={() => setIsCreateModalOpen(true)}
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '8px',
-            padding: '10px 20px',
-            backgroundColor: 'var(--accent-primary)',
-            color: '#fff',
-            border: 'none',
-            borderRadius: 'var(--radius-md)',
-            fontSize: '0.875rem',
-            fontWeight: 600,
-            cursor: 'pointer',
-            boxShadow: 'var(--shadow-sm)',
-            transition: 'all var(--transition-fast)',
-          }}
-        >
-          <Plus size={18} />
-          Create Board
-        </button>
-      </div>
-
-      {/* Controls: Search and Project Filter */}
+      {/* Filter and Search Bar */}
       <div
         style={{
           display: 'flex',
@@ -128,99 +109,74 @@ export function BoardsPage() {
           flexWrap: 'wrap',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1 }}>
-          {/* Project Filter */}
+        {/* Project Filter */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <label
+            htmlFor="boards-project-filter"
+            style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', fontWeight: 500 }}
+          >
+            Project:
+          </label>
           <select
-            aria-label="Filter boards by project"
+            id="boards-project-filter"
             value={selectedProjectId}
             onChange={e => setSelectedProjectId(e.target.value)}
             style={{
-              padding: '8px 14px',
+              padding: '7px 12px',
               backgroundColor: 'var(--bg-secondary)',
               border: '1px solid var(--border-subtle)',
               borderRadius: 'var(--radius-md)',
               color: 'var(--text-primary)',
               fontSize: '0.875rem',
               outline: 'none',
+              cursor: 'pointer',
             }}
           >
-            <option value="">All Projects</option>
+            <option value="">All Boards (Workspace-wide)</option>
             {projects.map(p => (
               <option key={p.id} value={p.id}>
                 {p.name}
               </option>
             ))}
           </select>
+        </div>
 
-          {/* Search Input */}
-          <div style={{ position: 'relative', minWidth: '240px', flex: 1, maxWidth: '360px' }}>
-            <Search
-              size={16}
-              style={{
-                position: 'absolute',
-                left: '12px',
-                top: '50%',
-                transform: 'translateY(-50%)',
-                color: 'var(--text-muted)',
-              }}
-            />
-            <input
-              type="search"
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-              placeholder="Search boards..."
-              style={{
-                width: '100%',
-                padding: '8px 12px 8px 36px',
-                backgroundColor: 'var(--bg-secondary)',
-                border: '1px solid var(--border-subtle)',
-                borderRadius: 'var(--radius-md)',
-                color: 'var(--text-primary)',
-                fontSize: '0.875rem',
-                outline: 'none',
-                boxSizing: 'border-box',
-              }}
-            />
-          </div>
+        {/* Search Input */}
+        <div style={{ position: 'relative', minWidth: '240px' }}>
+          <Search
+            size={16}
+            style={{
+              position: 'absolute',
+              left: '12px',
+              top: '50%',
+              transform: 'translateY(-50%)',
+              color: 'var(--text-muted)',
+            }}
+            aria-hidden="true"
+          />
+          <input
+            type="search"
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            placeholder="Search boards..."
+            aria-label="Search boards"
+            style={{
+              width: '100%',
+              padding: '8px 12px 8px 36px',
+              backgroundColor: 'var(--bg-secondary)',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: 'var(--radius-md)',
+              color: 'var(--text-primary)',
+              fontSize: '0.875rem',
+              outline: 'none',
+              boxSizing: 'border-box',
+            }}
+          />
         </div>
       </div>
 
       {/* Error State */}
-      {error && (
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            padding: '12px 16px',
-            backgroundColor: 'rgba(239, 68, 68, 0.1)',
-            border: '1px solid rgba(239, 68, 68, 0.3)',
-            borderRadius: 'var(--radius-md)',
-            color: '#ef4444',
-            fontSize: '0.875rem',
-            marginBottom: '20px',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <AlertCircle size={18} />
-            <span>{error}</span>
-          </div>
-          <button
-            type="button"
-            onClick={loadData}
-            style={{
-              background: 'transparent',
-              border: 'none',
-              color: '#ef4444',
-              textDecoration: 'underline',
-              cursor: 'pointer',
-              fontWeight: 600,
-            }}
-          >
-            Retry
-          </button>
-        </div>
-      )}
+      <ErrorBanner message={error} onRetry={loadData} />
 
       {/* Content */}
       {isLoading ? (
@@ -228,191 +184,142 @@ export function BoardsPage() {
           <LoadingSpinner />
         </div>
       ) : boards.length === 0 ? (
-        <div
-          style={{
-            padding: '64px 20px',
-            textAlign: 'center',
-            backgroundColor: 'var(--bg-secondary)',
-            border: '1px dashed var(--border-subtle)',
-            borderRadius: 'var(--radius-lg)',
-            marginTop: '16px',
-          }}
-        >
-          <Kanban size={48} style={{ color: 'var(--text-muted)', marginBottom: '16px' }} />
-          <h3
-            style={{
-              fontSize: '1.125rem',
-              fontWeight: 600,
-              color: 'var(--text-primary)',
-              margin: '0 0 8px 0',
-            }}
-          >
-            No boards found
-          </h3>
-          <p
-            style={{
-              fontSize: '0.875rem',
-              color: 'var(--text-muted)',
-              maxWidth: '400px',
-              margin: '0 auto 20px auto',
-            }}
-          >
-            {searchQuery
-              ? `No boards matched "${searchQuery}".`
-              : 'Create Kanban boards to visually organize tasks across customizable columns.'}
-          </p>
-          <button
-            type="button"
-            onClick={() => setIsCreateModalOpen(true)}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '8px',
-              padding: '9px 18px',
-              backgroundColor: 'var(--accent-primary)',
-              color: '#fff',
-              border: 'none',
-              borderRadius: 'var(--radius-md)',
-              fontSize: '0.875rem',
-              fontWeight: 600,
-              cursor: 'pointer',
-            }}
-          >
-            <Plus size={16} />
-            Create Board
-          </button>
-        </div>
+        <EmptyState
+          icon={Kanban}
+          title="No boards found"
+          description={
+            searchQuery || selectedProjectId
+              ? 'No boards matched your filter criteria.'
+              : 'Create Kanban boards to visualize tasks, manage columns, and streamline team or personal workflows.'
+          }
+          actionLabel="Create Board"
+          onAction={() => setIsCreateModalOpen(true)}
+          actionIcon={Plus}
+        />
       ) : (
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
             gap: '20px',
           }}
         >
-          {boards.map(board => (
-            <div
-              key={board.id}
-              onClick={() => navigate(`/boards/${board.id}`)}
-              style={{
-                backgroundColor: 'var(--bg-secondary)',
-                border: '1px solid var(--border-subtle)',
-                borderRadius: 'var(--radius-lg)',
-                padding: '22px',
-                display: 'flex',
-                flexDirection: 'column',
-                justifyContent: 'space-between',
-                cursor: 'pointer',
-                boxShadow: 'var(--shadow-sm)',
-                transition: 'all var(--transition-fast)',
-              }}
-            >
-              <div>
+          {boards.map(board => {
+            const project = projects.find(p => p.id === board.projectId);
+
+            return (
+              <div
+                key={board.id}
+                onClick={() => navigate(`/boards/${board.id}`)}
+                style={{
+                  backgroundColor: 'var(--bg-secondary)',
+                  border: '1px solid var(--border-subtle)',
+                  borderRadius: 'var(--radius-lg)',
+                  padding: '22px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'space-between',
+                  cursor: 'pointer',
+                  transition: 'all var(--transition-fast)',
+                  boxShadow: 'var(--shadow-sm)',
+                }}
+              >
+                <div>
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      marginBottom: '12px',
+                    }}
+                  >
+                    {project ? (
+                      <Badge variant="primary" size="sm" icon={FolderGit2}>
+                        {project.name}
+                      </Badge>
+                    ) : (
+                      <Badge variant="muted" size="sm">
+                        General Board
+                      </Badge>
+                    )}
+
+                    <button
+                      type="button"
+                      aria-label={`Delete board "${board.name}"`}
+                      onClick={e => {
+                        e.stopPropagation();
+                        setBoardToDelete(board);
+                      }}
+                      style={{
+                        background: 'transparent',
+                        border: 'none',
+                        color: 'var(--text-muted)',
+                        cursor: 'pointer',
+                        padding: '6px',
+                        borderRadius: 'var(--radius-sm)',
+                      }}
+                    >
+                      <Trash2 size={15} aria-hidden="true" />
+                    </button>
+                  </div>
+
+                  <h3
+                    style={{
+                      fontSize: '1.125rem',
+                      fontWeight: 600,
+                      color: 'var(--text-primary)',
+                      margin: '0 0 8px 0',
+                    }}
+                  >
+                    {board.name}
+                  </h3>
+
+                  {board.description && (
+                    <p
+                      style={{
+                        fontSize: '0.8125rem',
+                        color: 'var(--text-secondary)',
+                        margin: '0 0 16px 0',
+                        lineHeight: 1.5,
+                        display: '-webkit-box',
+                        WebkitLineClamp: 2,
+                        WebkitBoxOrient: 'vertical',
+                        overflow: 'hidden',
+                      }}
+                    >
+                      {board.description}
+                    </p>
+                  )}
+                </div>
+
                 <div
                   style={{
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'space-between',
-                    marginBottom: '10px',
+                    fontSize: '0.75rem',
+                    color: 'var(--text-muted)',
+                    borderTop: '1px solid var(--border-subtle)',
+                    paddingTop: '12px',
+                    marginTop: '16px',
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <Kanban size={18} style={{ color: 'var(--accent-primary)' }} />
-                    <h3
-                      style={{
-                        fontSize: '1.0625rem',
-                        fontWeight: 600,
-                        color: 'var(--text-primary)',
-                        margin: 0,
-                      }}
-                    >
-                      {board.name}
-                    </h3>
-                  </div>
-
-                  <button
-                    type="button"
-                    aria-label={`Delete board "${board.name}"`}
-                    onClick={e => handleDeleteBoard(board.id, e)}
+                  <span>Kanban Workflow</span>
+                  <span
                     style={{
-                      background: 'transparent',
-                      border: 'none',
-                      color: 'var(--text-muted)',
-                      cursor: 'pointer',
-                      padding: '4px',
-                      borderRadius: 'var(--radius-sm)',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      color: 'var(--accent-primary)',
+                      fontWeight: 500,
                     }}
                   >
-                    <Trash2 size={15} />
-                  </button>
+                    Open board <ExternalLink size={12} aria-hidden="true" />
+                  </span>
                 </div>
-
-                {board.description && (
-                  <p
-                    style={{
-                      fontSize: '0.8125rem',
-                      color: 'var(--text-secondary)',
-                      margin: '0 0 16px 0',
-                      lineHeight: 1.5,
-                      display: '-webkit-box',
-                      WebkitLineClamp: 2,
-                      WebkitBoxOrient: 'vertical',
-                      overflow: 'hidden',
-                    }}
-                  >
-                    {board.description}
-                  </p>
-                )}
-
-                {board.projectName && (
-                  <div style={{ marginBottom: '12px' }}>
-                    <span
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '5px',
-                        fontSize: '0.75rem',
-                        padding: '2px 8px',
-                        backgroundColor: 'var(--bg-surface)',
-                        color: 'var(--accent-primary)',
-                        borderRadius: 'var(--radius-sm)',
-                      }}
-                    >
-                      <FolderGit2 size={12} /> {board.projectName}
-                    </span>
-                  </div>
-                )}
               </div>
-
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  borderTop: '1px solid var(--border-subtle)',
-                  paddingTop: '14px',
-                  fontSize: '0.75rem',
-                  color: 'var(--text-muted)',
-                }}
-              >
-                <span>
-                  {board.columnCount ?? 3} columns · {board.taskCount ?? 0} tasks
-                </span>
-
-                <span
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '4px',
-                    color: 'var(--accent-primary)',
-                    fontWeight: 500,
-                  }}
-                >
-                  Open board <ExternalLink size={12} />
-                </span>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -422,7 +329,22 @@ export function BoardsPage() {
         onClose={() => setIsCreateModalOpen(false)}
         onCreateBoard={handleCreateBoard}
         projects={projects}
+        initialProjectId={selectedProjectId}
       />
-    </main>
+
+      {/* Standard Accessible Confirmation Dialog */}
+      <ConfirmDialog
+        isOpen={!!boardToDelete}
+        onClose={() => setBoardToDelete(null)}
+        onConfirm={handleConfirmDelete}
+        title="Delete Board"
+        message={
+          boardToDelete ? `Are you sure you want to delete board "${boardToDelete.name}"?` : ''
+        }
+        consequence="Tasks associated with this board will have their board reference unlinked, but will not be deleted."
+        confirmLabel="Delete Board"
+        isLoading={isDeleting}
+      />
+    </div>
   );
 }

@@ -1,17 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import {
-  ArrowLeft,
-  Clock,
-  Plus,
-  Edit2,
-  Trash2,
-  Kanban,
-  CheckSquare,
-  Users,
-  AlertCircle,
-} from 'lucide-react';
+import { ArrowLeft, Clock, Plus, Edit2, Trash2, Kanban, CheckSquare, Users } from 'lucide-react';
 import { LoadingSpinner } from '../components/common/LoadingSpinner.jsx';
+import { Button } from '../components/common/Button.jsx';
+import { Badge } from '../components/common/Badge.jsx';
+import { ErrorBanner } from '../components/common/ErrorBanner.jsx';
+import { EmptyState } from '../components/common/EmptyState.jsx';
+import { ConfirmDialog } from '../components/common/ConfirmDialog.jsx';
+import { useToast } from '../components/common/ToastContext.jsx';
 import { CreateProjectModal } from '../components/projects/CreateProjectModal.jsx';
 import { CreateBoardModal } from '../components/boards/CreateBoardModal.jsx';
 import { CreateTaskModal } from '../components/tasks/CreateTaskModal.jsx';
@@ -24,6 +20,7 @@ import * as tasksApi from '../services/tasks.api.js';
 export function ProjectDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const toast = useToast();
 
   const [project, setProject] = useState(null);
   const [boards, setBoards] = useState([]);
@@ -36,6 +33,11 @@ export function ProjectDetailPage() {
   const [isCreateBoardModalOpen, setIsCreateBoardModalOpen] = useState(false);
   const [isCreateTaskModalOpen, setIsCreateTaskModalOpen] = useState(false);
   const [selectedTask, setSelectedTask] = useState(null);
+
+  // Confirm dialogs
+  const [isDeleteProjectOpen, setIsDeleteProjectOpen] = useState(false);
+  const [taskToDelete, setTaskToDelete] = useState(null);
+  const [actionLoading, setActionLoading] = useState(false);
 
   const loadProjectData = useCallback(async () => {
     setIsLoading(true);
@@ -60,50 +62,96 @@ export function ProjectDetailPage() {
     loadProjectData();
   }, [loadProjectData]);
 
+  // Listen to global quick task creation
+  useEffect(() => {
+    function handleGlobalTaskCreated(e) {
+      const created = e.detail;
+      if (created && created.projectId === id) {
+        setTasks(prev => {
+          if (prev.some(t => t.id === created.id)) return prev;
+          return [created, ...prev];
+        });
+      }
+    }
+    window.addEventListener('workaholic:task-created', handleGlobalTaskCreated);
+    return () => {
+      window.removeEventListener('workaholic:task-created', handleGlobalTaskCreated);
+    };
+  }, [id]);
+
   async function handleUpdateProject(updates) {
-    const updated = await projectsApi.updateProject(id, null, updates);
-    setProject(prev => ({ ...prev, ...updated }));
+    try {
+      const updated = await projectsApi.updateProject(id, null, updates);
+      setProject(prev => ({ ...prev, ...updated }));
+      toast.success('Project updated successfully');
+    } catch (err) {
+      toast.error(`Failed to update project: ${err.message}`);
+    }
   }
 
-  async function handleDeleteProject() {
-    if (
-      !window.confirm(
-        `Delete project "${project.name}"? Tasks associated with this project will be preserved.`,
-      )
-    )
-      return;
+  async function handleConfirmDeleteProject() {
     try {
+      setActionLoading(true);
       await projectsApi.deleteProject(id);
+      toast.success(`Project "${project?.name}" deleted`);
       navigate('/projects');
     } catch (err) {
+      toast.error(`Failed to delete project: ${err.message}`);
       setError(`Failed to delete project: ${err.message}`);
+    } finally {
+      setActionLoading(false);
+      setIsDeleteProjectOpen(false);
     }
   }
 
   async function handleCreateBoard(boardData) {
-    const created = await boardsApi.createBoard(null, { ...boardData, projectId: id });
-    setBoards(prev => [created, ...prev]);
-    navigate(`/boards/${created.id}`);
+    try {
+      const created = await boardsApi.createBoard(null, { ...boardData, projectId: id });
+      setBoards(prev => [created, ...prev]);
+      toast.success(`Board "${created.name}" created`);
+      navigate(`/boards/${created.id}`);
+    } catch (err) {
+      toast.error(`Failed to create board: ${err.message}`);
+    }
   }
 
   async function handleCreateTask(taskData) {
-    const created = await tasksApi.createTask(null, { ...taskData, projectId: id });
-    setTasks(prev => [created, ...prev]);
+    try {
+      const created = await tasksApi.createTask(null, { ...taskData, projectId: id });
+      setTasks(prev => [created, ...prev]);
+      toast.success('Task created successfully');
+    } catch (err) {
+      toast.error(`Failed to create task: ${err.message}`);
+    }
   }
 
   async function handleToggleTaskComplete(task) {
     const newStatus = task.status === 'COMPLETED' ? 'TODO' : 'COMPLETED';
-    const updated = await tasksApi.updateTask(task.id, null, {
-      status: newStatus,
-      version: task.version,
-    });
-    setTasks(prev => prev.map(t => (t.id === updated.id ? updated : t)));
+    try {
+      const updated = await tasksApi.updateTask(task.id, null, {
+        status: newStatus,
+        version: task.version,
+      });
+      setTasks(prev => prev.map(t => (t.id === updated.id ? updated : t)));
+      toast.info(newStatus === 'COMPLETED' ? 'Task completed' : 'Task reopened');
+    } catch (err) {
+      toast.error(`Failed to update task: ${err.message}`);
+    }
   }
 
-  async function handleDeleteTask(task) {
-    if (!window.confirm(`Delete task "${task.title}"?`)) return;
-    await tasksApi.deleteTask(task.id);
-    setTasks(prev => prev.filter(t => t.id !== task.id));
+  async function handleConfirmDeleteTask() {
+    if (!taskToDelete) return;
+    try {
+      setActionLoading(true);
+      await tasksApi.deleteTask(taskToDelete.id);
+      setTasks(prev => prev.filter(t => t.id !== taskToDelete.id));
+      toast.success(`Task "${taskToDelete.title}" deleted`);
+    } catch (err) {
+      toast.error(`Failed to delete task: ${err.message}`);
+    } finally {
+      setActionLoading(false);
+      setTaskToDelete(null);
+    }
   }
 
   if (isLoading) {
@@ -141,10 +189,7 @@ export function ProjectDetailPage() {
         >
           <ArrowLeft size={16} /> Back to Projects
         </button>
-        <div style={{ color: '#ef4444', display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <AlertCircle size={20} />
-          <span>{error || 'Project not found'}</span>
-        </div>
+        <ErrorBanner message={error || 'Project not found'} />
       </main>
     );
   }
@@ -214,18 +259,9 @@ export function ProjectDetailPage() {
               >
                 {project.name}
               </h1>
-              <span
-                style={{
-                  fontSize: '0.75rem',
-                  fontWeight: 600,
-                  padding: '3px 10px',
-                  borderRadius: 'var(--radius-sm)',
-                  backgroundColor: 'var(--bg-surface)',
-                  color: 'var(--accent-primary)',
-                }}
-              >
+              <Badge variant={project.status === 'ACTIVE' ? 'primary' : 'muted'}>
                 {project.status}
-              </span>
+              </Badge>
             </div>
 
             {project.description && (
@@ -270,45 +306,31 @@ export function ProjectDetailPage() {
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <button
+            <Button
               type="button"
+              variant="secondary"
+              icon={Edit2}
               onClick={() => setIsEditModalOpen(true)}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-                padding: '8px 16px',
-                backgroundColor: 'var(--bg-surface)',
-                border: '1px solid var(--border-subtle)',
-                borderRadius: 'var(--radius-md)',
-                color: 'var(--text-primary)',
-                fontSize: '0.8125rem',
-                fontWeight: 500,
-                cursor: 'pointer',
-              }}
             >
-              <Edit2 size={14} /> Edit Project
-            </button>
-            <button
+              Edit Project
+            </Button>
+            <Button
               type="button"
-              onClick={handleDeleteProject}
-              aria-label="Delete project"
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-                padding: '8px 14px',
-                backgroundColor: 'transparent',
-                border: '1px solid var(--border-subtle)',
-                borderRadius: 'var(--radius-md)',
-                color: 'var(--accent-danger, #ef4444)',
-                fontSize: '0.8125rem',
-                fontWeight: 500,
-                cursor: 'pointer',
+              variant="danger"
+              icon={Trash2}
+              onClick={() => {
+                if (
+                  window.confirm(
+                    'Are you sure you want to delete this project? This will unlink all tasks without deleting them.',
+                  )
+                ) {
+                  handleConfirmDeleteProject();
+                }
               }}
+              aria-label="Delete project"
             >
-              <Trash2 size={14} /> Delete
-            </button>
+              Delete
+            </Button>
           </div>
         </div>
 
@@ -438,40 +460,24 @@ export function ProjectDetailPage() {
       {activeTab === 'tasks' && (
         <div>
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '16px' }}>
-            <button
+            <Button
               type="button"
+              variant="primary"
+              icon={Plus}
               onClick={() => setIsCreateTaskModalOpen(true)}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-                padding: '8px 16px',
-                backgroundColor: 'var(--accent-primary)',
-                color: '#fff',
-                border: 'none',
-                borderRadius: 'var(--radius-md)',
-                fontSize: '0.8125rem',
-                fontWeight: 600,
-                cursor: 'pointer',
-              }}
             >
-              <Plus size={16} /> Add Task to Project
-            </button>
+              Add Task to Project
+            </Button>
           </div>
 
           {tasks.length === 0 ? (
-            <div
-              style={{
-                padding: '48px',
-                textAlign: 'center',
-                backgroundColor: 'var(--bg-secondary)',
-                border: '1px dashed var(--border-subtle)',
-                borderRadius: 'var(--radius-md)',
-                color: 'var(--text-muted)',
-              }}
-            >
-              No tasks assigned to this project yet.
-            </div>
+            <EmptyState
+              icon={CheckSquare}
+              title="No tasks assigned"
+              description="No tasks are currently assigned to this project."
+              actionLabel="Add Task to Project"
+              onAction={() => setIsCreateTaskModalOpen(true)}
+            />
           ) : (
             <ul
               style={{
@@ -489,7 +495,7 @@ export function ProjectDetailPage() {
                   task={task}
                   onToggleComplete={handleToggleTaskComplete}
                   onSelectTask={t => setSelectedTask(t)}
-                  onDeleteTask={handleDeleteTask}
+                  onDeleteTask={t => setTaskToDelete(t)}
                 />
               ))}
             </ul>
@@ -501,40 +507,24 @@ export function ProjectDetailPage() {
       {activeTab === 'boards' && (
         <div>
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '16px' }}>
-            <button
+            <Button
               type="button"
+              variant="primary"
+              icon={Plus}
               onClick={() => setIsCreateBoardModalOpen(true)}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-                padding: '8px 16px',
-                backgroundColor: 'var(--accent-primary)',
-                color: '#fff',
-                border: 'none',
-                borderRadius: 'var(--radius-md)',
-                fontSize: '0.8125rem',
-                fontWeight: 600,
-                cursor: 'pointer',
-              }}
             >
-              <Plus size={16} /> Create Board for Project
-            </button>
+              Create Board for Project
+            </Button>
           </div>
 
           {boards.length === 0 ? (
-            <div
-              style={{
-                padding: '48px',
-                textAlign: 'center',
-                backgroundColor: 'var(--bg-secondary)',
-                border: '1px dashed var(--border-subtle)',
-                borderRadius: 'var(--radius-md)',
-                color: 'var(--text-muted)',
-              }}
-            >
-              No boards created for this project yet.
-            </div>
+            <EmptyState
+              icon={Kanban}
+              title="No boards yet"
+              description="No boards created for this project yet."
+              actionLabel="Create Board for Project"
+              onAction={() => setIsCreateBoardModalOpen(true)}
+            />
           ) : (
             <div
               style={{
@@ -669,16 +659,35 @@ export function ProjectDetailPage() {
       />
 
       <TaskDetailDrawer
-        taskId={selectedTask?.id}
+        task={selectedTask}
         isOpen={Boolean(selectedTask)}
         onClose={() => setSelectedTask(null)}
         onTaskUpdated={updated => {
           setTasks(prev => prev.map(t => (t.id === updated.id ? updated : t)));
         }}
-        onTaskDeleted={deletedId => {
-          setTasks(prev => prev.filter(t => t.id !== deletedId));
-          setSelectedTask(null);
-        }}
+      />
+
+      {/* Confirm Dialogs */}
+      <ConfirmDialog
+        isOpen={isDeleteProjectOpen}
+        onClose={() => setIsDeleteProjectOpen(false)}
+        onConfirm={handleConfirmDeleteProject}
+        title={`Delete project "${project?.name}"?`}
+        message="Tasks associated with this project will be preserved and unlinked. This project will be moved to trash."
+        confirmLabel="Delete Project"
+        variant="danger"
+        loading={actionLoading}
+      />
+
+      <ConfirmDialog
+        isOpen={Boolean(taskToDelete)}
+        onClose={() => setTaskToDelete(null)}
+        onConfirm={handleConfirmDeleteTask}
+        title={`Delete task "${taskToDelete?.title}"?`}
+        message="This task will be moved to trash. You can restore it later if needed."
+        confirmLabel="Delete Task"
+        variant="danger"
+        loading={actionLoading}
       />
     </main>
   );

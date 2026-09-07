@@ -1,5 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { CheckSquare, Plus, Search, AlertCircle, Clock, Inbox, RefreshCw } from 'lucide-react';
+import { Plus, Search, Clock, RefreshCw, Inbox } from 'lucide-react';
+import { PageHeader } from '../components/common/PageHeader.jsx';
+import { Button } from '../components/common/Button.jsx';
+import { EmptyState } from '../components/common/EmptyState.jsx';
+import { ErrorBanner } from '../components/common/ErrorBanner.jsx';
+import { useToast } from '../components/common/ToastContext.jsx';
 import { TaskItem } from '../components/tasks/TaskItem.jsx';
 import { CreateTaskModal } from '../components/tasks/CreateTaskModal.jsx';
 import { TaskDetailDrawer } from '../components/tasks/TaskDetailDrawer.jsx';
@@ -10,6 +15,7 @@ export function TasksPage() {
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const toast = useToast();
 
   // Filters & Search
   const [statusFilter, setStatusFilter] = useState('ALL');
@@ -48,6 +54,23 @@ export function TasksPage() {
     loadTasks();
   }, [loadTasks]);
 
+  // Listen to global quick task creation
+  useEffect(() => {
+    function handleGlobalTaskCreated(e) {
+      const created = e.detail;
+      if (created) {
+        setTasks(prev => {
+          if (prev.some(t => t.id === created.id)) return prev;
+          return [created, ...prev];
+        });
+      }
+    }
+    window.addEventListener('workaholic:task-created', handleGlobalTaskCreated);
+    return () => {
+      window.removeEventListener('workaholic:task-created', handleGlobalTaskCreated);
+    };
+  }, []);
+
   // Optimistic Toggle Complete
   async function handleToggleComplete(task) {
     const originalStatus = task.status;
@@ -76,6 +99,7 @@ export function TasksPage() {
       if (selectedTask && selectedTask.id === task.id) {
         setSelectedTask(updated);
       }
+      toast.info(optimisticStatus === 'COMPLETED' ? 'Task completed' : 'Task reopened');
     } catch (err) {
       // Rollback on failure
       setTasks(prev =>
@@ -83,20 +107,26 @@ export function TasksPage() {
           t.id === task.id ? { ...t, status: originalStatus, isOverdue: task.isOverdue } : t,
         ),
       );
+      toast.error(`Failed to update task: ${err.message}`);
       setError(`Failed to update task: ${err.message}`);
     }
   }
 
   // Handle task creation
   async function handleCreateTask(taskData) {
-    const newTask = await tasksApi.createTask(activeWorkspaceId, taskData);
-    setTasks(prev => [newTask, ...prev]);
+    try {
+      const newTask = await tasksApi.createTask(activeWorkspaceId, taskData);
+      setTasks(prev => [newTask, ...prev]);
+      toast.success('Task created successfully');
+    } catch (err) {
+      toast.error(`Failed to create task: ${err.message}`);
+      throw err;
+    }
   }
 
-  // Handle task deletion (soft delete with undoable notification)
+  // Handle task deletion (soft delete)
   async function handleDeleteTask(task) {
     if (!window.confirm(`Are you sure you want to delete "${task.title}"?`)) return;
-
     try {
       await tasksApi.deleteTask(task.id, activeWorkspaceId);
       setTasks(prev => prev.filter(t => t.id !== task.id));
@@ -104,8 +134,9 @@ export function TasksPage() {
         setIsDetailDrawerOpen(false);
         setSelectedTask(null);
       }
+      toast.success(`Task "${task.title}" deleted`);
     } catch (err) {
-      setError(`Failed to delete task: ${err.message}`);
+      toast.error(`Failed to delete task: ${err.message}`);
     }
   }
 
@@ -129,85 +160,32 @@ export function TasksPage() {
   return (
     <div style={{ padding: '32px', maxWidth: '1000px', width: '100%', margin: '0 auto' }}>
       {/* Header Bar */}
-      <header
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          marginBottom: '28px',
-          flexWrap: 'wrap',
-          gap: '16px',
-        }}
-      >
-        <div>
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              color: 'var(--text-muted)',
-              fontSize: '0.85rem',
-            }}
-          >
-            <CheckSquare size={16} />
-            <span>Task Management</span>
+      <PageHeader
+        title="Tasks"
+        subtitle="Task Management — Organize and track your personal priorities"
+        breadcrumbs={[{ label: 'Workaholic', href: '/tasks' }, { label: 'Tasks' }]}
+        actions={
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <Button
+              type="button"
+              variant="secondary"
+              icon={RefreshCw}
+              onClick={loadTasks}
+              aria-label="Refresh tasks"
+            >
+              Refresh
+            </Button>
+            <Button
+              type="button"
+              variant="primary"
+              icon={Plus}
+              onClick={() => setIsCreateModalOpen(true)}
+            >
+              New Task
+            </Button>
           </div>
-          <h2
-            style={{
-              fontSize: '1.75rem',
-              fontWeight: 700,
-              color: 'var(--text-primary)',
-              letterSpacing: '-0.025em',
-              margin: '4px 0 0 0',
-            }}
-          >
-            Tasks
-          </h2>
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <button
-            type="button"
-            onClick={loadTasks}
-            aria-label="Refresh tasks"
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              padding: '9px',
-              backgroundColor: 'var(--bg-surface)',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: 'var(--radius-sm)',
-              color: 'var(--text-muted)',
-            }}
-            title="Refresh"
-          >
-            <RefreshCw size={16} />
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setIsCreateModalOpen(true)}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              padding: '9px 18px',
-              backgroundColor: 'var(--accent-primary)',
-              border: 'none',
-              borderRadius: 'var(--radius-sm)',
-              color: '#ffffff',
-              fontSize: '0.9rem',
-              fontWeight: 600,
-              boxShadow: 'var(--shadow-sm)',
-              transition: 'background-color var(--transition-fast)',
-            }}
-          >
-            <Plus size={16} />
-            <span>New Task</span>
-          </button>
-        </div>
-      </header>
+        }
+      />
 
       {/* Filter and Search Bar */}
       <section
@@ -342,40 +320,8 @@ export function TasksPage() {
 
       {/* Error Banner */}
       {error && (
-        <div
-          role="alert"
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            padding: '12px 16px',
-            backgroundColor: 'rgba(239, 68, 68, 0.15)',
-            border: '1px solid rgba(239, 68, 68, 0.3)',
-            borderRadius: 'var(--radius-md)',
-            color: 'var(--accent-danger)',
-            fontSize: '0.9rem',
-            marginBottom: '20px',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <AlertCircle size={18} />
-            <span>{error}</span>
-          </div>
-          <button
-            type="button"
-            onClick={loadTasks}
-            style={{
-              padding: '4px 10px',
-              backgroundColor: 'rgba(239, 68, 68, 0.2)',
-              border: '1px solid rgba(239, 68, 68, 0.4)',
-              borderRadius: '4px',
-              color: 'var(--accent-danger)',
-              fontSize: '0.8rem',
-              fontWeight: 500,
-            }}
-          >
-            Retry
-          </button>
+        <div style={{ marginBottom: '20px' }}>
+          <ErrorBanner message={error} onRetry={loadTasks} onDismiss={() => setError(null)} />
         </div>
       )}
 
@@ -385,75 +331,17 @@ export function TasksPage() {
           <LoadingSpinner message="Loading tasks..." />
         ) : tasks.length === 0 ? (
           /* Empty State */
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              padding: '60px 20px',
-              backgroundColor: 'var(--bg-surface)',
-              border: '1px dashed var(--border-subtle)',
-              borderRadius: 'var(--radius-lg)',
-              textAlign: 'center',
-            }}
-          >
-            <div
-              style={{
-                width: '48px',
-                height: '48px',
-                borderRadius: '50%',
-                backgroundColor: 'rgba(99, 102, 241, 0.1)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: 'var(--accent-primary)',
-                marginBottom: '16px',
-              }}
-            >
-              <Inbox size={24} />
-            </div>
-            <h3
-              style={{
-                fontSize: '1.1rem',
-                fontWeight: 600,
-                color: 'var(--text-primary)',
-                margin: '0 0 6px 0',
-              }}
-            >
-              No tasks found
-            </h3>
-            <p
-              style={{
-                fontSize: '0.875rem',
-                color: 'var(--text-muted)',
-                maxWidth: '360px',
-                margin: '0 0 20px 0',
-              }}
-            >
-              {statusFilter !== 'ALL' || priorityFilter !== 'ALL' || overdueOnly || searchQuery
+          <EmptyState
+            icon={Inbox}
+            title="No tasks found"
+            description={
+              statusFilter !== 'ALL' || priorityFilter !== 'ALL' || overdueOnly || searchQuery
                 ? 'No tasks match the active filter criteria. Try adjusting your filters.'
-                : 'Your task list is empty. Capture your actionable work to stay productive.'}
-            </p>
-            <button
-              type="button"
-              onClick={() => setIsCreateModalOpen(true)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                padding: '8px 18px',
-                backgroundColor: 'var(--accent-primary)',
-                borderRadius: 'var(--radius-sm)',
-                color: '#ffffff',
-                fontSize: '0.875rem',
-                fontWeight: 500,
-              }}
-            >
-              <Plus size={15} />
-              <span>Create Task</span>
-            </button>
-          </div>
+                : 'Your task list is empty. Capture your actionable work to stay productive.'
+            }
+            actionLabel="Create Task"
+            onAction={() => setIsCreateModalOpen(true)}
+          />
         ) : (
           /* Populated List */
           <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>

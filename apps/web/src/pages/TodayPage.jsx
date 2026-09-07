@@ -1,13 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import {
-  Sparkles,
-  Calendar,
-  Clock,
-  CheckCircle2,
-  Circle,
-  AlertCircle,
-  RefreshCw,
-} from 'lucide-react';
+import { Clock, CheckCircle2, Circle, RefreshCw } from 'lucide-react';
+import { PageHeader } from '../components/common/PageHeader.jsx';
+import { Button } from '../components/common/Button.jsx';
+import { Badge } from '../components/common/Badge.jsx';
+import { ErrorBanner } from '../components/common/ErrorBanner.jsx';
+import { useToast } from '../components/common/ToastContext.jsx';
 import * as tasksApi from '../services/tasks.api.js';
 
 const PRIORITY_ORDER = { P0: 0, P1: 1, P2: 2, P3: 3, P4: 4 };
@@ -24,6 +21,7 @@ export function TodayPage() {
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const toast = useToast();
 
   const todayDate = new Intl.DateTimeFormat('en-US', {
     weekday: 'long',
@@ -48,6 +46,17 @@ export function TodayPage() {
     loadTasks();
   }, [loadTasks]);
 
+  // Listen to global quick task creation
+  useEffect(() => {
+    function handleGlobalTaskCreated() {
+      loadTasks();
+    }
+    window.addEventListener('workaholic:task-created', handleGlobalTaskCreated);
+    return () => {
+      window.removeEventListener('workaholic:task-created', handleGlobalTaskCreated);
+    };
+  }, [loadTasks]);
+
   // Handle completion toggle directly from Today view (TM-TASK-011)
   async function handleToggleComplete(task) {
     const isCompleted = task.status === 'COMPLETED';
@@ -70,12 +79,14 @@ export function TodayPage() {
         ? await tasksApi.reopenTask(task.id)
         : await tasksApi.completeTask(task.id);
       setTasks(prev => prev.map(t => (t.id === task.id ? updated : t)));
+      toast.info(isCompleted ? 'Task reopened' : 'Task completed');
     } catch (err) {
       setTasks(prev =>
         prev.map(t =>
           t.id === task.id ? { ...t, status: task.status, isOverdue: task.isOverdue } : t,
         ),
       );
+      toast.error(`Failed to update task: ${err.message}`);
       setError(`Failed to update task: ${err.message}`);
     }
   }
@@ -91,97 +102,28 @@ export function TodayPage() {
   return (
     <div style={{ padding: '32px', maxWidth: '1100px', width: '100%', margin: '0 auto' }}>
       {/* Header Bar */}
-      <header style={{ marginBottom: '32px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div>
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                color: 'var(--text-muted)',
-                fontSize: '0.85rem',
-              }}
-            >
-              <Calendar size={15} />
-              <span>{todayDate}</span>
-            </div>
-            <h2
-              style={{
-                fontSize: '1.75rem',
-                fontWeight: 700,
-                color: 'var(--text-primary)',
-                letterSpacing: '-0.025em',
-                margin: '6px 0',
-              }}
-            >
-              Today Cockpit
-            </h2>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <button
-              type="button"
-              onClick={loadTasks}
-              aria-label="Refresh Today view"
-              style={{
-                padding: '6px 12px',
-                backgroundColor: 'var(--bg-surface)',
-                border: '1px solid var(--border-subtle)',
-                borderRadius: 'var(--radius-sm)',
-                color: 'var(--text-muted)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                fontSize: '0.8125rem',
-              }}
-            >
-              <RefreshCw size={13} />
-              <span>Refresh</span>
-            </button>
-            <div
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-                padding: '6px 14px',
-                borderRadius: '9999px',
-                backgroundColor: 'rgba(56, 189, 248, 0.12)',
-                color: 'var(--accent-primary)',
-                fontSize: '0.8125rem',
-                fontWeight: 600,
-                border: '1px solid rgba(56, 189, 248, 0.25)',
-              }}
-            >
-              <Sparkles size={14} />
-              <span>Phase 1 Shell Active</span>
-            </div>
-          </div>
-        </div>
-        <p style={{ color: 'var(--text-secondary)', fontSize: '0.925rem', margin: '4px 0 0 0' }}>
-          Daily command center consolidating your scheduled tasks, academic Day Order, and focus
-          priorities.
-        </p>
-      </header>
+      <PageHeader
+        title="Today Cockpit"
+        badge={<Badge variant="primary">Phase 1 Shell Active</Badge>}
+        subtitle={`${todayDate} — Daily command center consolidating your scheduled tasks, academic Day Order, and focus priorities.`}
+        breadcrumbs={[{ label: 'Workaholic', href: '/' }, { label: 'Today' }]}
+        actions={
+          <Button
+            type="button"
+            variant="secondary"
+            icon={RefreshCw}
+            onClick={loadTasks}
+            aria-label="Refresh Today view"
+          >
+            Refresh
+          </Button>
+        }
+      />
 
       {/* Error Alert */}
       {error && (
-        <div
-          role="alert"
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            padding: '12px 16px',
-            backgroundColor: 'rgba(239, 68, 68, 0.15)',
-            border: '1px solid rgba(239, 68, 68, 0.3)',
-            borderRadius: 'var(--radius-sm)',
-            color: 'var(--accent-danger)',
-            fontSize: '0.875rem',
-            marginBottom: '20px',
-          }}
-        >
-          <AlertCircle size={16} />
-          <span>{error}</span>
+        <div style={{ marginBottom: '20px' }}>
+          <ErrorBanner message={error} onRetry={loadTasks} onDismiss={() => setError(null)} />
         </div>
       )}
 

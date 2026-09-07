@@ -1,16 +1,14 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import {
-  FolderGit2,
-  Plus,
-  Search,
-  Clock,
-  Trash2,
-  Edit2,
-  ExternalLink,
-  AlertCircle,
-} from 'lucide-react';
+import { FolderGit2, Plus, Search, Clock, Trash2, Edit2, ExternalLink } from 'lucide-react';
 import { LoadingSpinner } from '../components/common/LoadingSpinner.jsx';
+import { PageHeader } from '../components/common/PageHeader.jsx';
+import { EmptyState } from '../components/common/EmptyState.jsx';
+import { ErrorBanner } from '../components/common/ErrorBanner.jsx';
+import { Button } from '../components/common/Button.jsx';
+import { Badge } from '../components/common/Badge.jsx';
+import { ConfirmDialog } from '../components/common/ConfirmDialog.jsx';
+import { useToast } from '../components/common/ToastContext.jsx';
 import { CreateProjectModal } from '../components/projects/CreateProjectModal.jsx';
 import * as projectsApi from '../services/projects.api.js';
 
@@ -22,16 +20,17 @@ const STATUS_TABS = [
   { label: 'Archived', value: 'ARCHIVED' },
 ];
 
-const STATUS_BADGES = {
-  ACTIVE: { label: 'Active', bg: 'rgba(34, 197, 94, 0.15)', text: '#22c55e' },
-  ON_HOLD: { label: 'On Hold', bg: 'rgba(234, 179, 8, 0.15)', text: '#eab308' },
-  COMPLETED: { label: 'Completed', bg: 'rgba(99, 102, 241, 0.15)', text: '#818cf8' },
-  ARCHIVED: { label: 'Archived', bg: 'rgba(100, 116, 139, 0.15)', text: '#94a3b8' },
-  CANCELLED: { label: 'Cancelled', bg: 'rgba(239, 68, 68, 0.15)', text: '#ef4444' },
+const STATUS_VARIANTS = {
+  ACTIVE: 'success',
+  ON_HOLD: 'warning',
+  COMPLETED: 'primary',
+  ARCHIVED: 'muted',
+  CANCELLED: 'danger',
 };
 
 export function ProjectsPage() {
   const navigate = useNavigate();
+  const { toast } = useToast();
   const [projects, setProjects] = useState([]);
   const [activeTab, setActiveTab] = useState('ALL');
   const [searchQuery, setSearchQuery] = useState('');
@@ -39,6 +38,8 @@ export function ProjectsPage() {
   const [error, setError] = useState(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [editingProject, setEditingProject] = useState(null);
+  const [projectToDelete, setProjectToDelete] = useState(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const loadProjects = useCallback(async () => {
     setIsLoading(true);
@@ -64,85 +65,56 @@ export function ProjectsPage() {
     if (editingProject) {
       const updated = await projectsApi.updateProject(editingProject.id, null, projectData);
       setProjects(prev => prev.map(p => (p.id === updated.id ? { ...p, ...updated } : p)));
+      toast.success('Project updated successfully');
     } else {
       const created = await projectsApi.createProject(null, projectData);
       setProjects(prev => [created, ...prev]);
+      toast.success('Project created successfully');
     }
   }
 
-  async function handleDeleteProject(id, e) {
-    e.stopPropagation();
-    if (!window.confirm('Are you sure you want to delete this project?')) return;
+  async function handleConfirmDelete() {
+    if (!projectToDelete) return;
     try {
-      await projectsApi.deleteProject(id);
-      setProjects(prev => prev.filter(p => p.id !== id));
+      setIsDeleting(true);
+      await projectsApi.deleteProject(projectToDelete.id);
+      setProjects(prev => prev.filter(p => p.id !== projectToDelete.id));
+      toast.success('Project deleted successfully');
+      setProjectToDelete(null);
     } catch (err) {
-      alert(err.message || 'Failed to delete project');
+      toast.error(err.message || 'Failed to delete project');
+    } finally {
+      setIsDeleting(false);
     }
   }
 
   return (
-    <main
-      id="main-content"
+    <div
       style={{
         flex: 1,
-        padding: '32px 40px',
+        padding: '24px 28px',
         overflowY: 'auto',
         backgroundColor: 'var(--bg-primary)',
+        boxSizing: 'border-box',
       }}
     >
-      {/* Header */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          marginBottom: '28px',
-        }}
-      >
-        <div>
-          <h1
-            style={{
-              fontSize: '1.75rem',
-              fontWeight: 700,
-              color: 'var(--text-primary)',
-              letterSpacing: '-0.02em',
-              margin: '0 0 6px 0',
+      {/* Standardized PageHeader */}
+      <PageHeader
+        title="Projects"
+        description="Higher-level bodies of work, deliverables, and organizational contexts."
+        actions={
+          <Button
+            variant="primary"
+            icon={Plus}
+            onClick={() => {
+              setEditingProject(null);
+              setIsCreateModalOpen(true);
             }}
           >
-            Projects
-          </h1>
-          <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)', margin: 0 }}>
-            Higher-level bodies of work, deliverables, and organizational contexts.
-          </p>
-        </div>
-
-        <button
-          type="button"
-          onClick={() => {
-            setEditingProject(null);
-            setIsCreateModalOpen(true);
-          }}
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '8px',
-            padding: '10px 20px',
-            backgroundColor: 'var(--accent-primary)',
-            color: '#fff',
-            border: 'none',
-            borderRadius: 'var(--radius-md)',
-            fontSize: '0.875rem',
-            fontWeight: 600,
-            cursor: 'pointer',
-            boxShadow: 'var(--shadow-sm)',
-            transition: 'all var(--transition-fast)',
-          }}
-        >
-          <Plus size={18} />
-          New Project
-        </button>
-      </div>
+            New Project
+          </Button>
+        }
+      />
 
       {/* Filter and Search Bar */}
       <div
@@ -186,6 +158,7 @@ export function ProjectsPage() {
                 backgroundColor: activeTab === tab.value ? 'var(--bg-surface)' : 'transparent',
                 cursor: 'pointer',
                 transition: 'all var(--transition-fast)',
+                minHeight: '32px',
               }}
             >
               {tab.label}
@@ -204,12 +177,14 @@ export function ProjectsPage() {
               transform: 'translateY(-50%)',
               color: 'var(--text-muted)',
             }}
+            aria-hidden="true"
           />
           <input
             type="search"
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
             placeholder="Search projects..."
+            aria-label="Search projects"
             style={{
               width: '100%',
               padding: '8px 12px 8px 36px',
@@ -226,41 +201,7 @@ export function ProjectsPage() {
       </div>
 
       {/* Error State */}
-      {error && (
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            padding: '12px 16px',
-            backgroundColor: 'rgba(239, 68, 68, 0.1)',
-            border: '1px solid rgba(239, 68, 68, 0.3)',
-            borderRadius: 'var(--radius-md)',
-            color: '#ef4444',
-            fontSize: '0.875rem',
-            marginBottom: '20px',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <AlertCircle size={18} />
-            <span>{error}</span>
-          </div>
-          <button
-            type="button"
-            onClick={loadProjects}
-            style={{
-              background: 'transparent',
-              border: 'none',
-              color: '#ef4444',
-              textDecoration: 'underline',
-              cursor: 'pointer',
-              fontWeight: 600,
-            }}
-          >
-            Retry
-          </button>
-        </div>
-      )}
+      <ErrorBanner message={error} onRetry={loadProjects} />
 
       {/* Content */}
       {isLoading ? (
@@ -268,63 +209,21 @@ export function ProjectsPage() {
           <LoadingSpinner />
         </div>
       ) : projects.length === 0 ? (
-        <div
-          style={{
-            padding: '64px 20px',
-            textAlign: 'center',
-            backgroundColor: 'var(--bg-secondary)',
-            border: '1px dashed var(--border-subtle)',
-            borderRadius: 'var(--radius-lg)',
-            marginTop: '16px',
-          }}
-        >
-          <FolderGit2 size={48} style={{ color: 'var(--text-muted)', marginBottom: '16px' }} />
-          <h3
-            style={{
-              fontSize: '1.125rem',
-              fontWeight: 600,
-              color: 'var(--text-primary)',
-              margin: '0 0 8px 0',
-            }}
-          >
-            No projects found
-          </h3>
-          <p
-            style={{
-              fontSize: '0.875rem',
-              color: 'var(--text-muted)',
-              maxWidth: '400px',
-              margin: '0 auto 20px auto',
-            }}
-          >
-            {searchQuery
+        <EmptyState
+          icon={FolderGit2}
+          title="No projects found"
+          description={
+            searchQuery
               ? `No projects matched "${searchQuery}".`
-              : 'Create projects to group tasks, track milestones, and organize workflows.'}
-          </p>
-          <button
-            type="button"
-            onClick={() => {
-              setEditingProject(null);
-              setIsCreateModalOpen(true);
-            }}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '8px',
-              padding: '9px 18px',
-              backgroundColor: 'var(--accent-primary)',
-              color: '#fff',
-              border: 'none',
-              borderRadius: 'var(--radius-md)',
-              fontSize: '0.875rem',
-              fontWeight: 600,
-              cursor: 'pointer',
-            }}
-          >
-            <Plus size={16} />
-            Create Project
-          </button>
-        </div>
+              : 'Create projects to group tasks, track milestones, and organize workflows.'
+          }
+          actionLabel="Create Project"
+          onAction={() => {
+            setEditingProject(null);
+            setIsCreateModalOpen(true);
+          }}
+          actionIcon={Plus}
+        />
       ) : (
         <div
           style={{
@@ -334,7 +233,7 @@ export function ProjectsPage() {
           }}
         >
           {projects.map(project => {
-            const badge = STATUS_BADGES[project.status] || STATUS_BADGES.ACTIVE;
+            const variant = STATUS_VARIANTS[project.status] || 'muted';
             const taskCount = project.taskCount ?? 0;
             const completedCount = project.completedTaskCount ?? 0;
             const percentage = taskCount > 0 ? Math.round((completedCount / taskCount) * 100) : 0;
@@ -373,18 +272,9 @@ export function ProjectsPage() {
                       marginBottom: '12px',
                     }}
                   >
-                    <span
-                      style={{
-                        fontSize: '0.6875rem',
-                        fontWeight: 600,
-                        padding: '2px 8px',
-                        borderRadius: 'var(--radius-sm)',
-                        backgroundColor: badge.bg,
-                        color: badge.text,
-                      }}
-                    >
-                      {badge.label}
-                    </span>
+                    <Badge variant={variant} size="sm">
+                      {project.status.replace('_', ' ')}
+                    </Badge>
 
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                       <button
@@ -400,26 +290,29 @@ export function ProjectsPage() {
                           border: 'none',
                           color: 'var(--text-muted)',
                           cursor: 'pointer',
-                          padding: '4px',
+                          padding: '6px',
                           borderRadius: 'var(--radius-sm)',
                         }}
                       >
-                        <Edit2 size={15} />
+                        <Edit2 size={15} aria-hidden="true" />
                       </button>
                       <button
                         type="button"
                         aria-label={`Delete project "${project.name}"`}
-                        onClick={e => handleDeleteProject(project.id, e)}
+                        onClick={e => {
+                          e.stopPropagation();
+                          setProjectToDelete(project);
+                        }}
                         style={{
                           background: 'transparent',
                           border: 'none',
                           color: 'var(--text-muted)',
                           cursor: 'pointer',
-                          padding: '4px',
+                          padding: '6px',
                           borderRadius: 'var(--radius-sm)',
                         }}
                       >
-                        <Trash2 size={15} />
+                        <Trash2 size={15} aria-hidden="true" />
                       </button>
                     </div>
                   </div>
@@ -505,7 +398,7 @@ export function ProjectsPage() {
                   >
                     {dueFormatted ? (
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                        <Clock size={13} />
+                        <Clock size={13} aria-hidden="true" />
                         Due {dueFormatted}
                       </span>
                     ) : (
@@ -521,7 +414,7 @@ export function ProjectsPage() {
                         fontWeight: 500,
                       }}
                     >
-                      View details <ExternalLink size={12} />
+                      View details <ExternalLink size={12} aria-hidden="true" />
                     </span>
                   </div>
                 </div>
@@ -541,6 +434,20 @@ export function ProjectsPage() {
         onCreateProject={handleCreateOrUpdateProject}
         initialData={editingProject}
       />
-    </main>
+
+      {/* Standard Accessible Confirmation Dialog */}
+      <ConfirmDialog
+        isOpen={!!projectToDelete}
+        onClose={() => setProjectToDelete(null)}
+        onConfirm={handleConfirmDelete}
+        title="Delete Project"
+        message={
+          projectToDelete ? `Are you sure you want to delete "${projectToDelete.name}"?` : ''
+        }
+        consequence="Tasks belonging to this project will be unlinked, but will not be deleted (per BR-PROJECT-001)."
+        confirmLabel="Delete Project"
+        isLoading={isDeleting}
+      />
+    </div>
   );
 }

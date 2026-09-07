@@ -2,9 +2,9 @@
 
 ## Status Overview
 
-- **Current Phase**: Phase 6 — Projects & Boards (COMPLETED & VERIFIED)
-- **Current Task**: Phase 6 Complete — Ready for Phase 7
-- **Overall Project Status**: Phase 0, Phase 1, Phase 2, Phase 3, Phase 4, Phase 5 & Phase 6 Complete
+- **Current Phase**: Phase 7 — Core Web UX (COMPLETED & VERIFIED)
+- **Current Task**: Phase 7 Complete — Ready for Phase 8: Calendar
+- **Overall Project Status**: Phase 0, Phase 1, Phase 2, Phase 3, Phase 4, Phase 5, Phase 6 & Phase 7 Complete
 - **Last Updated**: 2026-09-07
 - **Architecture Invariant**: JavaScript/JSX ONLY (zero TypeScript, zero ORMs, PostgreSQL authoritative, React 18.2.0 baseline)
 
@@ -873,3 +873,70 @@ All quality gates and live database tests pass:
 - **Phase 6 Classification**: **VERIFIED COMPLETE**
 - **Strict Invariants Preserved**: Pure JavaScript/JSX only, zero ORMs, parameterized PostgreSQL queries, zero microservices / Redis / Kafka.
 - **Scope Containment**: Phase 7 and later features (Calendar, Recurrence, Reminders, Google Drive, Notes, Collaboration, Offline Sync) strictly deferred; clean nullable extension points preserved.
+
+---
+
+## Phase 7: Core Web UX
+
+### Overview & Objectives
+
+Phase 7 unifies and refines the web client user experience across all implemented domains (Tasks, Projects, Boards, Today) according to `docs/phase-wise-plan.md` Section 11, `docs/13.UX-SPECIFICATION.md`, and `docs/14.DESIGN-SYSTEM.md`. This phase establishes shared, accessible UI primitives, an authoritative application shell with responsive navigation, modal dialog focus management, and unified loading, empty, and error states while preserving 100% of Phase 5 and Phase 6 business logic.
+
+### Completed Tasks
+
+1. **Design Tokens & Motion Utilities (`apps/web/src/index.css`)**:
+   - Integrated standardized design tokens for spacing, elevation shadows (`--shadow-sm` through `--shadow-2xl`), accessible touch targets (minimum 44px), and smooth micro-animations (`modalEnter`, `drawerSlideIn`, `toastIn`).
+   - Implemented strict `@media (prefers-reduced-motion: reduce)` rules that automatically zero out transitions and animations (`0.01ms`), satisfying `UX-T06`, `UX-T30`, and `TM-A11Y-007`.
+
+2. **Standardized Reusable UI Primitives (`apps/web/src/components/common/`)**:
+   - `Modal.jsx`: Authoritative modal dialog primitive enforcing WAI-ARIA modal dialog patterns (`role="dialog"`, `aria-modal="true"`, `aria-labelledby`). Features window-level Escape listener, focus trapping with cycle wrap, and focus restoration to opener element upon dismiss (`TM-A11Y-004`, `UX-T03`).
+   - `ConfirmDialog.jsx`: Standardized accessible destructive confirmation dialog replacing ad-hoc modals with consequence explanations and confirm/cancel action controls.
+   - `Button.jsx`: Universal button primitive supporting design system variants (`primary`, `secondary`, `danger`, `ghost`), sizes (`sm`, `md`, `lg`), `React.forwardRef` support, and accessible busy spinner state (`aria-busy="true"`).
+   - `Badge.jsx`: Accessible categorization and status badge meeting WCAG 2.1 AA color contrast standards (`UX-T05`).
+   - `EmptyState.jsx`: Standardized empty state primitive with `role="status"`, icon, title, description, and primary action trigger.
+   - `ErrorBanner.jsx`: Standardized error alert banner with `role="alert"`, descriptive message, and retry/dismiss callbacks.
+   - `PageHeader.jsx`: Unified page header providing title, description, status badge, and action container across all pages.
+   - `ToastContext.jsx`: Accessible notification system (`role="status"`, `aria-live="polite"`) providing polite transient alerts with auto-dismiss and dismiss buttons (`UX-T11`).
+
+3. **Canonical Application Shell & Responsive Navigation (`apps/web/src/components/layout/`)**:
+   - `TopBar.jsx`: Canonical application top bar with responsive location breadcrumb, workspace badge ("Personal"), and Global Quick Task capture trigger.
+   - `AppLayout.jsx`: Application shell with accessible skip link (`a.skip-link` -> `main#main-content` with `tabIndex={-1}` per `UX-T02`), responsive off-canvas mobile drawer with backdrop overlay (<768px viewport per `UX-T28`), ErrorBoundary wrapping, and integrated `ToastProvider`.
+   - Global Quick Task Capture: Quick Task modal opens from TopBar and broadcasts task creation across views via custom DOM event `workaholic:task-created`.
+
+4. **Task, Project & Board View Unification**:
+   - Upgraded `TasksPage.jsx`, `ProjectsPage.jsx`, `ProjectDetailPage.jsx`, `BoardsPage.jsx`, `BoardDetailPage.jsx`, and `TodayPage.jsx` to adopt `PageHeader`, `EmptyState`, `ErrorBanner`, `Button`, `Badge`, and `ToastContext`.
+   - Upgraded modal dialogs (`CreateTaskModal.jsx`, `CreateProjectModal.jsx`, `CreateBoardModal.jsx`, `CreateColumnModal.jsx`, `TaskDetailDrawer.jsx`) to wrap `Modal` and standardized primitives.
+   - Verified zero regressions on Phase 5 task workflows and Phase 6 project/board/Kanban workflows.
+
+5. **Automated Testing & Full Verification**:
+   - **Component Unit Suite (`apps/web/tests/core-ux.test.jsx`)**: 11 unit/component integration tests verifying Modal focus trap, escape key, focus restoration, ConfirmDialog, ToastContext, EmptyState, ErrorBanner, Button, Badge, and TopBar.
+   - **Playwright E2E Suite (`e2e/core-ux.spec.js`)**: 5 end-to-end tests verifying keyboard Tab order & skip link (`UX-T01`, `UX-T02`), modal focus trapping, escape dismiss & restoration (`UX-T03`, `TM-A11Y-004`), TopBar Quick Task creation with polite toast (`UX-T11`), responsive mobile drawer navigation toggle (`UX-T28`), and reduced-motion compliance (`UX-T06`, `UX-T30`, `TM-A11Y-007`).
+   - **Full Playwright Suite (`npm run test:e2e`)**: All 20 tests pass across `core-ux.spec.js`, `tasks.spec.js`, and `projects-boards.spec.js`.
+
+---
+
+## Phase 7 Final Verification Matrix
+
+| Verification Check          | Scope / Command                    | Result     | Details                                            |
+| --------------------------- | ---------------------------------- | ---------- | -------------------------------------------------- |
+| **JavaScript-Only Guard**   | `npm run check:js-only`            | **PASSED** | 0 TypeScript files across whole repository         |
+| **Linter Verification**     | `npm run lint`                     | **PASSED** | 0 errors, 0 warnings across all workspaces         |
+| **Formatting Check**        | `npm run format:check`             | **PASSED** | 100% Prettier compliant                            |
+| **Shared Unit Tests**       | `packages/shared/tests/*.test.js`  | **PASSED** | 22/22 tests passed (schemas + datetime)            |
+| **Backend Test Suite**      | `apps/backend/tests/*.test.js`     | **PASSED** | 272/272 tests passed across 22 test files          |
+| **Web Test Suite**          | `apps/web/tests/*.test.jsx`        | **PASSED** | 50/50 tests passed across 6 test files             |
+| **Desktop Tests**           | `apps/desktop/tests/*.test.js`     | **PASSED** | 3/3 tests passed (security + IPC whitelist)        |
+| **Mobile Tests**            | `apps/mobile/tests/*.test.js`      | **PASSED** | 6/6 tests passed (tabs + env + API client)         |
+| **Monorepo Unit/Int Tests** | `npm test`                         | **PASSED** | **353/353 tests passed** across 31 test files      |
+| **Playwright E2E Tests**    | `npx playwright test`              | **PASSED** | **21/21 tests passed** across all 3 E2E test specs |
+| **Web Production Build**    | `npm run build -w @workaholic/web` | **PASSED** | Production bundle generated cleanly in 1.56s       |
+
+---
+
+## Phase 7 Summary
+
+- **Phase 7 Classification**: **VERIFIED COMPLETE**
+- **Strict Invariants Preserved**: Pure JavaScript/JSX only, zero ORMs, PostgreSQL authoritative, React 18.2.0 baseline.
+- **Accessibility Compliance**: Fully keyboard navigatable (`UX-T01`), skip link jumps to main content (`UX-T02`), modal focus trapping and restoration (`UX-T03`), WCAG 2.1 AA contrast ratios (`UX-T05`), reduced motion support (`UX-T06`), mobile off-canvas drawer (<768px `UX-T28`).
+- **Scope Containment**: Phase 8: Calendar and all subsequent phases (Recurrence, Reminders, Google Drive, Notes, Booking, Collaboration) strictly deferred. Clean navigation links exist without fake or premature domain implementations.
+- **Next Authorized Phase**: Phase 8: Calendar (Awaiting explicit user authorization).
