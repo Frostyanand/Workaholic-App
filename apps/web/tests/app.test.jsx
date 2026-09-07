@@ -8,6 +8,24 @@ import App from '../src/App.jsx';
 import { ErrorBoundary } from '../src/components/common/ErrorBoundary.jsx';
 import { LoadingSpinner } from '../src/components/common/LoadingSpinner.jsx';
 
+vi.mock('../src/services/calendar.api.js', () => ({
+  fetchCalendars: vi
+    .fn()
+    .mockResolvedValue([
+      { id: 'cal-1', name: 'Personal', color: '#6366f1', isDefault: true, isVisible: true },
+    ]),
+  fetchCalendarEvents: vi.fn().mockResolvedValue({
+    events: [],
+    workBlocks: [],
+    deadlines: [],
+    meta: { total: 0 },
+  }),
+  createCalendar: vi.fn(),
+  createEvent: vi.fn(),
+  updateEvent: vi.fn(),
+  deleteEvent: vi.fn(),
+}));
+
 describe('Web Application Shell (Task 1.1)', () => {
   it('renders the authenticated shell and Today cockpit at root path', async () => {
     const container = document.createElement('div');
@@ -33,14 +51,14 @@ describe('Web Application Shell (Task 1.1)', () => {
     expect(container.textContent).toContain('Notes');
     expect(container.textContent).toContain('Settings');
 
-    // Today Cockpit view
-    expect(container.textContent).toContain('Today Cockpit');
-    expect(container.textContent).toContain('Phase 1 Shell Active');
-    expect(container.textContent).toContain('Focus Task');
-    expect(container.textContent).toContain('Work Blocks & Day Order');
+    // Today Command Center view (Phase 9)
+    expect(container.textContent).toContain('Today / Command Center');
+    expect(container.textContent).toContain('Daily Cockpit');
+    expect(container.textContent).toContain('Current Work');
+    expect(container.textContent).toContain("Today's Schedule");
   });
 
-  it('renders placeholder views for remaining shell routes', async () => {
+  it('renders calendar interface at /calendar (Phase 8)', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     const root = createRoot(container);
@@ -53,8 +71,25 @@ describe('Web Application Shell (Task 1.1)', () => {
       );
     });
 
-    expect(container.textContent).toContain('Unified Calendar');
-    expect(container.textContent).toContain('Phase 8');
+    expect(container.textContent).toContain('+ Event');
+    expect(container.textContent).toContain('Calendars');
+  });
+
+  it('renders placeholder views for remaining future shell routes (e.g. Academic Phase 18)', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(
+        <MemoryRouter initialEntries={['/academic']}>
+          <App />
+        </MemoryRouter>,
+      );
+    });
+
+    expect(container.textContent).toContain('Academic Scheduling');
+    expect(container.textContent).toContain('Phase 18');
   });
 
   it('renders projects interface at /projects (Phase 6)', async () => {

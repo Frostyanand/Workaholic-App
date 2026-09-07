@@ -7,6 +7,9 @@ import {
   TASK_LINK_TYPE,
   PROJECT_STATUS,
   PROJECT_ROLE,
+  CALENDAR_SOURCE,
+  CALENDAR_VISIBILITY,
+  EVENT_VISIBILITY,
 } from '../constants/index.js';
 
 export const idSchema = z.string().uuid({ message: 'Invalid UUID identifier' });
@@ -363,4 +366,238 @@ export const reorderBoardColumnsSchema = z.object({
 export const moveBoardTaskSchema = z.object({
   columnId: z.string().uuid({ message: 'Valid column ID is required' }),
   status: z.nativeEnum(TASK_STATUS).optional(),
+});
+
+// Calendar Schemas (Phase 8)
+export const createCalendarSchema = z.object({
+  name: z
+    .string({ required_error: 'Calendar name is required' })
+    .trim()
+    .min(1, 'Calendar name cannot be empty')
+    .max(255, 'Calendar name must not exceed 255 characters'),
+  description: z.string().trim().max(10000).nullable().optional(),
+  color: z
+    .string()
+    .trim()
+    .regex(/^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/, 'Color must be a valid hex string (e.g. #3B82F6)')
+    .default('#3B82F6'),
+  sourceType: z.nativeEnum(CALENDAR_SOURCE).default(CALENDAR_SOURCE.WORKAHOLIC),
+  visibility: z.nativeEnum(CALENDAR_VISIBILITY).default(CALENDAR_VISIBILITY.PRIVATE),
+  timezone: z.string().trim().max(100).default('UTC'),
+  isDefault: z.boolean().default(false),
+  externalAccountId: z.string().trim().max(255).nullable().optional(),
+  externalCalendarId: z.string().trim().max(255).nullable().optional(),
+});
+
+export const updateCalendarSchema = createCalendarSchema.partial();
+
+export const calendarQuerySchema = z.object({
+  sourceType: z.nativeEnum(CALENDAR_SOURCE).optional(),
+  visibility: z.nativeEnum(CALENDAR_VISIBILITY).optional(),
+  search: z.string().trim().max(255).optional(),
+  limit: z.coerce.number().int().positive().max(100).default(50),
+  offset: z.coerce.number().int().nonnegative().default(0),
+});
+
+// Event Schemas (Phase 8 - Whole-date all-day semantics + timed events)
+export const createEventSchema = z
+  .object({
+    calendarId: z.string().uuid({ message: 'Valid calendar ID is required' }),
+    title: z
+      .string({ required_error: 'Event title is required' })
+      .trim()
+      .min(1, 'Event title cannot be empty')
+      .max(255, 'Event title must not exceed 255 characters'),
+    description: z.string().trim().max(10000).nullable().optional(),
+    location: z.string().trim().max(500).nullable().optional(),
+    meetingUrl: z.string().trim().max(1000).nullable().optional(),
+    visibility: z.nativeEnum(EVENT_VISIBILITY).default(EVENT_VISIBILITY.PRIVATE),
+    sourceType: z.nativeEnum(CALENDAR_SOURCE).default(CALENDAR_SOURCE.WORKAHOLIC),
+    sourceReference: z.string().trim().max(255).nullable().optional(),
+    recurrenceRuleId: z.string().uuid().nullable().optional(),
+    timezone: z.string().trim().max(100).default('UTC'),
+    isAllDay: z.boolean().default(false),
+    startAt: z.string().nullable().optional(),
+    endAt: z.string().nullable().optional(),
+    startDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, 'startDate must be in YYYY-MM-DD format')
+      .nullable()
+      .optional(),
+    endDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, 'endDate must be in YYYY-MM-DD format')
+      .nullable()
+      .optional(),
+    taskIds: z.array(z.string().uuid()).optional().default([]),
+    projectIds: z.array(z.string().uuid()).optional().default([]),
+  })
+  .superRefine((data, ctx) => {
+    if (data.isAllDay) {
+      const hasDateStrings = Boolean(data.startDate);
+      const hasTimestamps = Boolean(data.startAt);
+
+      if (!hasDateStrings && !hasTimestamps) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'All-day event requires either startDate or startAt',
+          path: ['startDate'],
+        });
+        return;
+      }
+
+      if (hasDateStrings) {
+        const start = data.startDate;
+        const end = data.endDate || data.startDate;
+        if (end < start) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'endDate cannot be before startDate',
+            path: ['endDate'],
+          });
+        }
+      } else if (hasTimestamps) {
+        const start = new Date(data.startAt);
+        const end = data.endAt ? new Date(data.endAt) : start;
+        if (Number.isNaN(start.getTime())) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'startAt must be a valid datetime string',
+            path: ['startAt'],
+          });
+        } else if (end.getTime() < start.getTime()) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'endAt cannot be before startAt',
+            path: ['endAt'],
+          });
+        }
+      }
+    } else {
+      if (!data.startAt) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'startAt is required for timed events',
+          path: ['startAt'],
+        });
+        return;
+      }
+      if (!data.endAt) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'endAt is required for timed events',
+          path: ['endAt'],
+        });
+        return;
+      }
+      const start = new Date(data.startAt);
+      const end = new Date(data.endAt);
+      if (Number.isNaN(start.getTime())) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'startAt must be a valid ISO datetime string',
+          path: ['startAt'],
+        });
+      } else if (Number.isNaN(end.getTime())) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'endAt must be a valid ISO datetime string',
+          path: ['endAt'],
+        });
+      } else if (end.getTime() <= start.getTime()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'endAt must be strictly after startAt for timed events',
+          path: ['endAt'],
+        });
+      }
+    }
+  });
+
+export const updateEventSchema = z
+  .object({
+    calendarId: z.string().uuid().optional(),
+    title: z.string().trim().min(1).max(255).optional(),
+    description: z.string().trim().max(10000).nullable().optional(),
+    location: z.string().trim().max(500).nullable().optional(),
+    meetingUrl: z.string().trim().max(1000).nullable().optional(),
+    visibility: z.nativeEnum(EVENT_VISIBILITY).optional(),
+    sourceType: z.nativeEnum(CALENDAR_SOURCE).optional(),
+    sourceReference: z.string().trim().max(255).nullable().optional(),
+    recurrenceRuleId: z.string().uuid().nullable().optional(),
+    timezone: z.string().trim().max(100).optional(),
+    isAllDay: z.boolean().optional(),
+    startAt: z.string().nullable().optional(),
+    endAt: z.string().nullable().optional(),
+    startDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, 'startDate must be in YYYY-MM-DD format')
+      .nullable()
+      .optional(),
+    endDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, 'endDate must be in YYYY-MM-DD format')
+      .nullable()
+      .optional(),
+    taskIds: z.array(z.string().uuid()).optional(),
+    projectIds: z.array(z.string().uuid()).optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.startAt && data.endAt && data.isAllDay === false) {
+      const start = new Date(data.startAt);
+      const end = new Date(data.endAt);
+      if (end.getTime() <= start.getTime()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'endAt must be strictly after startAt for timed events',
+          path: ['endAt'],
+        });
+      }
+    }
+    if (data.startDate && data.endDate) {
+      if (data.endDate < data.startDate) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'endDate cannot be before startDate',
+          path: ['endDate'],
+        });
+      }
+    }
+  });
+
+export const calendarRangeQuerySchema = z.object({
+  start: z.string().optional(),
+  end: z.string().optional(),
+  calendarIds: z
+    .union([z.string(), z.array(z.string())])
+    .optional()
+    .transform(val => {
+      if (!val) return undefined;
+      if (Array.isArray(val)) return val;
+      return val
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean);
+    }),
+  sourceType: z.nativeEnum(CALENDAR_SOURCE).optional(),
+  timezone: z.string().default('UTC'),
+  includeTasks: z
+    .union([z.boolean(), z.enum(['true', 'false'])])
+    .transform(val => val === true || val === 'true')
+    .optional()
+    .default(false),
+  includeWorkBlocks: z
+    .union([z.boolean(), z.enum(['true', 'false'])])
+    .transform(val => val === true || val === 'true')
+    .optional()
+    .default(true),
+});
+
+// Today / Command Center Query Schema (Phase 9)
+export const todayQuerySchema = z.object({
+  date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'date must be in YYYY-MM-DD format')
+    .optional(),
+  timezone: z.string().trim().max(100).optional(),
 });

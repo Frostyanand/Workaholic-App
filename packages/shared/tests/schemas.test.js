@@ -27,6 +27,21 @@ import {
   createMembershipSchema,
   createDeviceSchema,
   createSessionSchema,
+  EVENT_VISIBILITY,
+  EVENT_STATUS,
+  CALENDAR_VISIBILITY,
+  CALENDAR_VIEW,
+  CALENDAR_SOURCE,
+  createCalendarSchema,
+  updateCalendarSchema,
+  calendarQuerySchema,
+  createEventSchema,
+  updateEventSchema,
+  calendarRangeQuerySchema,
+  normalizeAllDayBounds,
+  extractAllDayDates,
+  deriveAllDayDates,
+  todayQuerySchema,
 } from '../src/index.js';
 
 describe('@workaholic/shared constants', () => {
@@ -374,5 +389,161 @@ describe('@workaholic/shared core entity schemas', () => {
         status: 'COMPLETED',
       }).success,
     ).toBe(true);
+  });
+
+  describe('Calendar & Event Schemas and Whole-Date Semantics (Phase 8)', () => {
+    it('validates calendar creation schema', () => {
+      const validCalendar = {
+        name: 'Personal Calendar',
+        description: 'My private events',
+        color: '#3B82F6',
+        sourceType: CALENDAR_SOURCE.WORKAHOLIC,
+        visibility: CALENDAR_VISIBILITY.PRIVATE,
+        timezone: 'America/New_York',
+      };
+      const result = createCalendarSchema.safeParse(validCalendar);
+      expect(result.success).toBe(true);
+      expect(result.data.name).toBe('Personal Calendar');
+      expect(result.data.isDefault).toBe(false);
+
+      // Rejects invalid hex color
+      expect(createCalendarSchema.safeParse({ name: 'Cal', color: 'blue' }).success).toBe(false);
+      // Rejects empty name
+      expect(createCalendarSchema.safeParse({ name: '   ' }).success).toBe(false);
+    });
+
+    it('validates timed event with strict temporal ordering', () => {
+      const validTimedEvent = {
+        calendarId: '123e4567-e89b-12d3-a456-426614174000',
+        title: 'Architecture Review',
+        isAllDay: false,
+        startAt: '2026-09-15T14:00:00.000Z',
+        endAt: '2026-09-15T15:00:00.000Z',
+        timezone: 'UTC',
+      };
+      expect(createEventSchema.safeParse(validTimedEvent).success).toBe(true);
+
+      // Rejects timed event where endAt <= startAt
+      const invertedTimedEvent = {
+        ...validTimedEvent,
+        endAt: '2026-09-15T13:00:00.000Z',
+      };
+      const result = createEventSchema.safeParse(invertedTimedEvent);
+      expect(result.success).toBe(false);
+      expect(result.error.issues[0].message).toContain('endAt must be strictly after startAt');
+
+      // Rejects timed event with equal startAt and endAt
+      const zeroDurationEvent = {
+        ...validTimedEvent,
+        endAt: '2026-09-15T14:00:00.000Z',
+      };
+      expect(createEventSchema.safeParse(zeroDurationEvent).success).toBe(false);
+    });
+
+    it('validates all-day event preserving whole-date semantics', () => {
+      // 1. Single-day all-day event using date strings
+      const singleDayEvent = {
+        calendarId: '123e4567-e89b-12d3-a456-426614174000',
+        title: 'College Holiday',
+        isAllDay: true,
+        startDate: '2026-09-15',
+        endDate: '2026-09-15',
+      };
+      expect(createEventSchema.safeParse(singleDayEvent).success).toBe(true);
+
+      // 2. Multi-day all-day event
+      const multiDayEvent = {
+        calendarId: '123e4567-e89b-12d3-a456-426614174000',
+        title: 'Hackathon',
+        isAllDay: true,
+        startDate: '2026-09-15',
+        endDate: '2026-09-17',
+      };
+      expect(createEventSchema.safeParse(multiDayEvent).success).toBe(true);
+
+      // 3. Rejects inverted date range
+      const invalidDateRange = {
+        ...multiDayEvent,
+        startDate: '2026-09-17',
+        endDate: '2026-09-15',
+      };
+      const invResult = createEventSchema.safeParse(invalidDateRange);
+      expect(invResult.success).toBe(false);
+      expect(invResult.error.issues[0].message).toContain('endDate cannot be before startDate');
+
+      // 4. All-day using ISO timestamps
+      const timestampAllDay = {
+        calendarId: '123e4567-e89b-12d3-a456-426614174000',
+        title: 'Birthday',
+        isAllDay: true,
+        startAt: '2026-09-15T00:00:00.000Z',
+        endAt: '2026-09-15T23:59:59.999Z',
+      };
+      expect(createEventSchema.safeParse(timestampAllDay).success).toBe(true);
+    });
+
+    it('normalizes and derives all-day date bounds without timezone shifts', () => {
+      const normalized = normalizeAllDayBounds('2026-09-15', '2026-09-15');
+      expect(normalized.startAt).toBe('2026-09-15T00:00:00.000Z');
+      expect(normalized.endAt).toBe('2026-09-15T23:59:59.999Z');
+      expect(normalized.startDate).toBe('2026-09-15');
+      expect(normalized.endDate).toBe('2026-09-15');
+
+      const extracted = extractAllDayDates(normalized.startAt, normalized.endAt);
+      expect(extracted.startDate).toBe('2026-09-15');
+      expect(extracted.endDate).toBe('2026-09-15');
+
+      const days = deriveAllDayDates('2026-09-15', '2026-09-17');
+      expect(days).toEqual(['2026-09-15', '2026-09-16', '2026-09-17']);
+    });
+
+    it('validates calendar range query parameters', () => {
+      const validQuery = {
+        start: '2026-09-01T00:00:00.000Z',
+        end: '2026-09-30T23:59:59.999Z',
+        calendarIds: '123e4567-e89b-12d3-a456-426614174000,123e4567-e89b-12d3-a456-426614174001',
+        includeTasks: 'true',
+        includeWorkBlocks: 'true',
+      };
+      const result = calendarRangeQuerySchema.safeParse(validQuery);
+      expect(result.success).toBe(true);
+      expect(result.data.includeTasks).toBe(true);
+      expect(result.data.includeWorkBlocks).toBe(true);
+      expect(result.data.calendarIds).toHaveLength(2);
+    });
+
+    it('validates calendar updates, queries, and enums', () => {
+      expect(EVENT_VISIBILITY.PRIVATE).toBe('PRIVATE');
+      expect(EVENT_STATUS.CONFIRMED).toBe('CONFIRMED');
+      expect(CALENDAR_VIEW.MONTH).toBe('MONTH');
+
+      expect(updateCalendarSchema.safeParse({ name: 'Renamed Calendar' }).success).toBe(true);
+      expect(calendarQuerySchema.safeParse({ search: 'Dev' }).success).toBe(true);
+      expect(updateEventSchema.safeParse({ title: 'Rescheduled' }).success).toBe(true);
+    });
+  });
+
+  describe('Phase 9 Today & Command Center Schemas', () => {
+    it('validates today query parameters', () => {
+      // Valid cases
+      expect(todayQuerySchema.safeParse({}).success).toBe(true);
+      expect(todayQuerySchema.safeParse({ date: '2026-09-07' }).success).toBe(true);
+      expect(
+        todayQuerySchema.safeParse({ date: '2026-09-07', timezone: 'Asia/Kolkata' }).success,
+      ).toBe(true);
+      expect(todayQuerySchema.safeParse({ timezone: 'UTC' }).success).toBe(true);
+
+      // Invalid date format
+      const invalidDate = todayQuerySchema.safeParse({ date: '07-09-2026' });
+      expect(invalidDate.success).toBe(false);
+      expect(invalidDate.error.issues[0].message).toContain('YYYY-MM-DD format');
+
+      const invalidDateStr = todayQuerySchema.safeParse({ date: 'invalid-date' });
+      expect(invalidDateStr.success).toBe(false);
+
+      // Invalid timezone length
+      const longTz = todayQuerySchema.safeParse({ timezone: 'a'.repeat(101) });
+      expect(longTz.success).toBe(false);
+    });
   });
 });

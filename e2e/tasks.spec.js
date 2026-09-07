@@ -48,6 +48,48 @@ test.describe('Task Management E2E Journeys', () => {
       },
     ];
 
+    // Intercept Today endpoint for TM-TASK-011
+    await page.route('**/api/v1/today**', async route => {
+      const active = mockTasks.filter(t => t.status !== 'COMPLETED');
+      const completed = mockTasks.filter(t => t.status === 'COMPLETED');
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          data: {
+            date: new Date().toISOString().split('T')[0],
+            timezone: 'UTC',
+            currentWork: null,
+            nextWork: null,
+            dueToday: active,
+            overdue: [],
+            important: active,
+            unscheduled: active,
+            calendarEvents: [],
+            workBlocks: [],
+            completedToday: completed,
+            counts: {
+              dueToday: active.length,
+              overdue: 0,
+              important: active.length,
+              unscheduled: active.length,
+              completedToday: completed.length,
+              calendarEvents: 0,
+              workBlocks: 0,
+            },
+          },
+        }),
+      });
+    });
+
+    await page.route('**/api/v1/calendar/**', async route => {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ data: [] }),
+      });
+    });
+
     // Intercept backend API calls with stateful mock handlers
     await page.route('**/api/v1/tasks/**', async route => {
       const url = new URL(route.request().url());
@@ -422,17 +464,22 @@ test.describe('Task Management E2E Journeys', () => {
     await page.goto('/');
 
     // Verify Today page loads tasks
-    await expect(page.locator('#focus-task-heading')).toBeVisible();
-    await expect(page.locator('text=Authoritative Architecture Review')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Today / Command Center' })).toBeVisible();
+    const dueTodaySection = page.locator('[data-testid="due-today-section"]');
+    await expect(dueTodaySection.locator('text=Authoritative Architecture Review')).toBeVisible();
 
     // Complete task on Today view
-    const todayToggle = page.getByRole('checkbox', {
+    const todayToggle = dueTodaySection.getByRole('checkbox', {
       name: /Complete Authoritative Architecture Review/i,
     });
     await todayToggle.click();
 
-    // Verify task moves to "Completed Today" section with line-through
+    // Verify task moves to "Completed Today" section
     await expect(page.locator('text=Completed Today (1)')).toBeVisible();
+
+    // Open Completed Today section
+    await page.locator('#completed-today-heading').click();
+
     const reopenToggle = page.getByRole('checkbox', {
       name: /Reopen Authoritative Architecture Review/i,
     });
@@ -441,9 +488,9 @@ test.describe('Task Management E2E Journeys', () => {
     // Reopen task
     await reopenToggle.click();
 
-    // Verify task returns to active list
+    // Verify task returns to active list in Due Today
     await expect(
-      page.getByRole('checkbox', { name: /Complete Authoritative Architecture Review/i }),
+      dueTodaySection.getByRole('checkbox', { name: /Complete Authoritative Architecture Review/i }),
     ).toBeVisible();
   });
 

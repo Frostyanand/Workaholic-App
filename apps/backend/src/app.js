@@ -14,6 +14,7 @@ import { tasksRoutes } from './modules/tasks/tasks.routes.js';
 import { projectsRoutes } from './modules/projects/projects.routes.js';
 import { boardsRoutes, columnsRoutes } from './modules/boards/boards.routes.js';
 import { calendarRoutes } from './modules/calendar/calendar.routes.js';
+import { todayRoutes } from './modules/today/today.routes.js';
 import { notesRoutes } from './modules/notes/notes.routes.js';
 
 export function createApp(opts = {}) {
@@ -110,6 +111,8 @@ export function createApp(opts = {}) {
   app.register(boardsRoutes, { prefix: '/api/v1/boards' });
   app.register(columnsRoutes, { prefix: '/api/v1/columns' });
   app.register(calendarRoutes, { prefix: '/api/v1/calendar' });
+  app.register(calendarRoutes, { prefix: '/api/v1' });
+  app.register(todayRoutes, { prefix: '/api/v1/today' });
   app.register(notesRoutes, { prefix: '/api/v1/notes' });
 
   return app;

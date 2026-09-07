@@ -121,3 +121,67 @@ export function addDays(input, days) {
   date.setUTCDate(date.getUTCDate() + days);
   return date;
 }
+
+/**
+ * Normalizes all-day calendar date strings into authoritative UTC timestamp boundaries
+ * and explicit calendar date strings.
+ * @param {string} startDate - YYYY-MM-DD
+ * @param {string} [endDate] - YYYY-MM-DD (defaults to startDate if omitted)
+ * @returns {{ startAt: string, endAt: string, startDate: string, endDate: string }}
+ */
+export function normalizeAllDayBounds(startDate, endDate = startDate) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
+    throw new TypeError('startDate must be in YYYY-MM-DD format');
+  }
+  const resolvedEnd = endDate || startDate;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(resolvedEnd)) {
+    throw new TypeError('endDate must be in YYYY-MM-DD format');
+  }
+  if (resolvedEnd < startDate) {
+    throw new RangeError('endDate cannot precede startDate');
+  }
+
+  return {
+    startAt: `${startDate}T00:00:00.000Z`,
+    endAt: `${resolvedEnd}T23:59:59.999Z`,
+    startDate,
+    endDate: resolvedEnd,
+  };
+}
+
+/**
+ * Extracts calendar date strings (YYYY-MM-DD) from UTC timestamp bounds for an all-day event.
+ * @param {Date | number | string} startAt
+ * @param {Date | number | string} endAt
+ * @returns {{ startDate: string, endDate: string }}
+ */
+export function extractAllDayDates(startAt, endAt) {
+  return {
+    startDate: formatISODate(startAt),
+    endDate: formatISODate(endAt),
+  };
+}
+
+/**
+ * Returns an array of YYYY-MM-DD strings for every calendar date spanned by an all-day event (inclusive).
+ * @param {string} startDate - YYYY-MM-DD
+ * @param {string} [endDate] - YYYY-MM-DD
+ * @returns {string[]}
+ */
+export function deriveAllDayDates(startDate, endDate = startDate) {
+  const resolvedEnd = endDate || startDate;
+  const dates = [];
+  let current = parseISODate(`${startDate}T00:00:00.000Z`);
+  const end = parseISODate(`${resolvedEnd}T00:00:00.000Z`);
+
+  if (!current || !end || current.getTime() > end.getTime()) {
+    return [startDate];
+  }
+
+  while (current.getTime() <= end.getTime()) {
+    dates.push(formatISODate(current));
+    current = addDays(current, 1);
+  }
+
+  return dates;
+}

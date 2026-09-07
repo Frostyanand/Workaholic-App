@@ -144,3 +144,29 @@ export const PROJECT_ROLE = Object.freeze({
   MEMBER: 'MEMBER',
   VIEWER: 'VIEWER',
 });
+
+export const EVENT_VISIBILITY = Object.freeze({
+  PRIVATE: 'PRIVATE',
+  SHARED: 'SHARED',
+  PUBLIC: 'PUBLIC',
+});
+
+export const EVENT_STATUS = Object.freeze({
+  CONFIRMED: 'CONFIRMED',
+  TENTATIVE: 'TENTATIVE',
+  CANCELLED: 'CANCELLED',
+});
+
+export const CALENDAR_VISIBILITY = Object.freeze({
+  PRIVATE: 'PRIVATE',
+  SHARED: 'SHARED',
+  PUBLIC: 'PUBLIC',
+});
+
+export const CALENDAR_VIEW = Object.freeze({
+  DAY: 'DAY',
+  WEEK: 'WEEK',
+  WORKWEEK: 'WORKWEEK',
+  MONTH: 'MONTH',
+  AGENDA: 'AGENDA',
+});

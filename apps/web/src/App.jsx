@@ -9,6 +9,7 @@ import { ProjectsPage } from './pages/ProjectsPage.jsx';
 import { ProjectDetailPage } from './pages/ProjectDetailPage.jsx';
 import { BoardsPage } from './pages/BoardsPage.jsx';
 import { BoardDetailPage } from './pages/BoardDetailPage.jsx';
+import { CalendarPage } from './pages/CalendarPage.jsx';
 import { LoginPage } from './pages/LoginPage.jsx';
 import { NotFoundPage } from './pages/NotFoundPage.jsx';
 import { PlaceholderPage } from './pages/PlaceholderPage.jsx';
@@ -25,16 +26,8 @@ export default function App() {
           <Route path="projects/:id" element={<ProjectDetailPage />} />
           <Route path="boards" element={<BoardsPage />} />
           <Route path="boards/:id" element={<BoardDetailPage />} />
-          <Route
-            path="calendar"
-            element={
-              <PlaceholderPage
-                title="Unified Calendar"
-                phase="Phase 8"
-                description="Multi-view scheduling, time-blocking, and two-way Google Calendar synchronization."
-              />
-            }
-          />
+          <Route path="calendar" element={<CalendarPage />} />
+
           <Route
             path="academic"
             element={

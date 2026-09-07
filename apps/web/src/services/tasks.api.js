@@ -150,3 +150,22 @@ export async function removeLabel(taskId, workspaceId, labelId) {
   });
   return res.data;
 }
+
+export async function createWorkBlock(taskId, workspaceId, blockData) {
+  const headers = workspaceId ? { 'x-workspace-id': workspaceId } : {};
+  const res = await request(`${API_BASE}/tasks/${taskId}/work-blocks`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(blockData),
+  });
+  return res.data;
+}
+
+export async function deleteWorkBlock(taskId, workspaceId, blockId) {
+  const headers = workspaceId ? { 'x-workspace-id': workspaceId } : {};
+  const res = await request(`${API_BASE}/tasks/${taskId}/work-blocks/${blockId}`, {
+    method: 'DELETE',
+    headers,
+  });
+  return res.data;
+}
