@@ -176,14 +176,23 @@ export class OAuthBoundaryService {
       client,
     );
 
+    // Merge scopes with existing account if already connected
+    const existingAccount = await this.integrationsRepo.findExternalAccount(
+      integration.id,
+      'GOOGLE',
+      client,
+    );
+    const mergedScopes = Array.from(new Set([...(existingAccount?.scopes || []), ...scopes]));
+
     // Save external account with encrypted credentials
     await this.integrationsRepo.upsertExternalAccount(
       {
         integrationId: integration.id,
         provider: 'GOOGLE',
-        externalAccountId: tokenData.externalAccountId || `acc_${Date.now()}`,
-        displayName: tokenData.displayName || 'Google Account',
-        scopes,
+        externalAccountId:
+          tokenData.externalAccountId || existingAccount?.externalAccountId || `acc_${Date.now()}`,
+        displayName: tokenData.displayName || existingAccount?.displayName || 'Google Account',
+        scopes: mergedScopes,
         encryptedCredentials,
       },
       client,
@@ -242,7 +251,7 @@ export class OAuthBoundaryService {
   /**
    * Retrieves integration connection status and enabled Google API scopes.
    */
-  async getIntegrationStatus(userId, client = undefined) {
+  async getIntegrationStatus(userId, service = null, client = undefined) {
     const integration = await this.integrationsRepo.findIntegration(userId, 'GOOGLE', client);
     if (!integration || (integration.status !== 'CONNECTED' && integration.status !== 'SYNCING')) {
       return {
@@ -258,11 +267,25 @@ export class OAuthBoundaryService {
       client,
     );
 
+    const scopes = account?.scopes || [];
+    if (service) {
+      const requiredScopes = GOOGLE_API_SCOPES[service.toUpperCase()] || [];
+      const hasScope = requiredScopes.some(s => scopes.includes(s));
+      if (!hasScope) {
+        return {
+          connected: false,
+          status: 'DISCONNECTED',
+          scopes,
+          accountDisplayName: account?.displayName || null,
+        };
+      }
+    }
+
     return {
       connected: true,
       status: integration.status,
       connectedAt: integration.connectedAt,
-      scopes: account?.scopes || [],
+      scopes,
       accountDisplayName: account?.displayName || null,
     };
   }

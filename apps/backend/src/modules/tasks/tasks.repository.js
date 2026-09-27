@@ -28,6 +28,8 @@ export function mapTaskRow(row) {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     deletedAt: row.deleted_at,
+    sourceType: row.source_type || 'WORKAHOLIC',
+    sourceReference: row.source_reference || null,
     ...(row.creator_display_name ? { creatorDisplayName: row.creator_display_name } : {}),
     ...(row.assignee_display_name ? { assigneeDisplayName: row.assignee_display_name } : {}),
     ...(row.subtask_count !== undefined ? { subtaskCount: parseInt(row.subtask_count, 10) } : {}),
@@ -62,6 +64,8 @@ export async function createTask(taskData, client = pool) {
     createdBy,
     assignedTo = null,
     recurrenceRuleId = null,
+    sourceType = 'WORKAHOLIC',
+    sourceReference = null,
   } = taskData;
 
   if (!workspaceId || !title || !createdBy) {
@@ -72,9 +76,10 @@ export async function createTask(taskData, client = pool) {
     INSERT INTO tasks (
       workspace_id, project_id, board_id, board_column_id, parent_task_id,
       title, description, status, priority, start_at, due_at,
-      estimated_duration, created_by, assigned_to, recurrence_rule_id
+      estimated_duration, created_by, assigned_to, recurrence_rule_id,
+      source_type, source_reference
     )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
     RETURNING *
   `;
   const params = [
@@ -93,6 +98,8 @@ export async function createTask(taskData, client = pool) {
     createdBy,
     assignedTo,
     recurrenceRuleId,
+    sourceType,
+    sourceReference,
   ];
 
   const result = await query(sql, params, client);
@@ -314,6 +321,8 @@ export async function updateTask(
     boardId: 'board_id',
     boardColumnId: 'board_column_id',
     recurrenceRuleId: 'recurrence_rule_id',
+    sourceType: 'source_type',
+    sourceReference: 'source_reference',
   };
 
   for (const [key, col] of Object.entries(allowedFields)) {

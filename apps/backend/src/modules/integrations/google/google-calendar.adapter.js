@@ -206,6 +206,17 @@ export class MockGoogleCalendarAdapter {
     this.shouldFailAuth = fail;
   }
 
+  seedEvents(calendarId, events) {
+    let calMap = this.eventsByCalendar.get(calendarId);
+    if (!calMap) {
+      calMap = new Map();
+      this.eventsByCalendar.set(calendarId, calMap);
+    }
+    for (const evt of events) {
+      calMap.set(evt.id, JSON.parse(JSON.stringify(evt)));
+    }
+  }
+
   async listCalendars(_accessToken) {
     if (this.shouldFailAuth) {
       const err = new Error('Google Calendar access token expired');

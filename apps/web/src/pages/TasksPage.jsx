@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Plus, Search, Clock, RefreshCw, Inbox } from 'lucide-react';
+import { Plus, Search, Clock, RefreshCw, Inbox, CheckSquare } from 'lucide-react';
 import { PageHeader } from '../components/common/PageHeader.jsx';
 import { Button } from '../components/common/Button.jsx';
 import { EmptyState } from '../components/common/EmptyState.jsx';
@@ -8,6 +8,7 @@ import { useToast } from '../components/common/ToastContext.jsx';
 import { TaskItem } from '../components/tasks/TaskItem.jsx';
 import { CreateTaskModal } from '../components/tasks/CreateTaskModal.jsx';
 import { TaskDetailDrawer } from '../components/tasks/TaskDetailDrawer.jsx';
+import { GoogleTasksSyncModal } from '../components/tasks/GoogleTasksSyncModal.jsx';
 import { LoadingSpinner } from '../components/common/LoadingSpinner.jsx';
 import * as tasksApi from '../services/tasks.api.js';
 
@@ -27,6 +28,7 @@ export function TasksPage() {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [selectedTask, setSelectedTask] = useState(null);
   const [isDetailDrawerOpen, setIsDetailDrawerOpen] = useState(false);
+  const [isGoogleTasksModalOpen, setIsGoogleTasksModalOpen] = useState(false);
 
   // Active workspace (defaults to current context)
   const [activeWorkspaceId] = useState(null);
@@ -190,6 +192,15 @@ export function TasksPage() {
               aria-label="Refresh tasks"
             >
               Refresh
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              icon={CheckSquare}
+              onClick={() => setIsGoogleTasksModalOpen(true)}
+              aria-label="Google Tasks Sync"
+            >
+              Google Tasks
             </Button>
             <Button
               type="button"
@@ -386,6 +397,13 @@ export function TasksPage() {
         isOpen={isDetailDrawerOpen}
         onClose={() => setIsDetailDrawerOpen(false)}
         onTaskUpdated={handleTaskUpdated}
+      />
+
+      <GoogleTasksSyncModal
+        isOpen={isGoogleTasksModalOpen}
+        onClose={() => setIsGoogleTasksModalOpen(false)}
+        workspaceId={activeWorkspaceId}
+        onSyncComplete={loadTasks}
       />
     </div>
   );

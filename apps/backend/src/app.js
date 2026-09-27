@@ -23,6 +23,7 @@ import {
 } from './modules/notifications/notifications.routes.js';
 import { devicesRoutes } from './modules/devices/devices.routes.js';
 import { integrationsRoutes } from './modules/integrations/integrations.routes.js';
+import { attachmentsRoutes } from './modules/attachments/attachments.routes.js';
 import { startReminderDispatcher } from './modules/notifications/reminder-dispatcher.js';
 
 export function createApp(opts = {}) {
@@ -128,6 +129,7 @@ export function createApp(opts = {}) {
   app.register(notificationPreferencesRoutes, { prefix: '/api/v1/notifications/preferences' });
   app.register(devicesRoutes, { prefix: '/api/v1/devices' });
   app.register(integrationsRoutes, { prefix: '/api/v1/integrations' });
+  app.register(attachmentsRoutes, { prefix: '/api/v1/attachments' });
 
   // Start in-process reminder dispatcher for Phase 11
   startReminderDispatcher(app);

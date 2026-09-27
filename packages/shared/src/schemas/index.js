@@ -810,3 +810,53 @@ export const googleSyncOptionsSchema = z.object({
   direction: z.nativeEnum(SYNC_DIRECTION).default(SYNC_DIRECTION.BIDIRECTIONAL),
   force: z.boolean().default(false),
 });
+
+export const googleTasksSyncOptionsSchema = z.object({
+  taskListId: z.string().optional(),
+  taskListMappingId: z.string().uuid().optional(),
+  direction: z.nativeEnum(SYNC_DIRECTION).default(SYNC_DIRECTION.BIDIRECTIONAL),
+  force: z.boolean().default(false),
+  async: z.boolean().default(false),
+});
+
+export const createAttachmentSchema = z.object({
+  targetType: z.enum(['TASK', 'PROJECT', 'NOTE']),
+  targetId: idSchema,
+  fileName: z.string().trim().min(1).max(255),
+  mimeType: z.string().trim().min(1).max(255).default('application/octet-stream'),
+  sizeBytes: z.coerce.number().int().nonnegative().default(0),
+  sourceType: z.enum(['GOOGLE_DRIVE', 'LOCAL', 'EXTERNAL']).default('GOOGLE_DRIVE'),
+  externalFileId: z.string().max(255).optional(),
+  webUrl: z.string().url().optional().nullable(),
+  uploadStatus: z.enum(['PENDING', 'UPLOADING', 'COMPLETED', 'FAILED']).default('COMPLETED'),
+});
+
+export const googleDriveUploadSchema = z.object({
+  targetType: z.enum(['TASK', 'PROJECT', 'NOTE']),
+  targetId: idSchema,
+  fileName: z.string().trim().min(1).max(255),
+  mimeType: z.string().trim().min(1).max(255).default('application/octet-stream'),
+  content: z.string().min(1, 'content is required'),
+  sizeBytes: z.coerce.number().int().nonnegative().optional(),
+  description: z.string().max(1000).optional(),
+  async: z.boolean().default(false),
+});
+
+export const googleDriveSyncOptionsSchema = z.object({
+  attachmentId: idSchema.optional(),
+  force: z.boolean().default(false),
+  async: z.boolean().default(false),
+});
+
+export const syncDiagnosticQuerySchema = z.object({
+  service: z.enum(['CALENDAR', 'TASKS', 'DRIVE']).optional(),
+  status: z.enum(['SUCCESS', 'PARTIAL_SUCCESS', 'FAILED']).optional(),
+  limit: z.coerce.number().int().positive().max(100).default(20),
+  offset: z.coerce.number().int().nonnegative().default(0),
+});
+
+export const syncRecoverySchema = z.object({
+  service: z.enum(['CALENDAR', 'TASKS', 'DRIVE', 'ALL']).default('ALL'),
+  resetCursor: z.boolean().default(false),
+  force: z.boolean().default(true),
+});

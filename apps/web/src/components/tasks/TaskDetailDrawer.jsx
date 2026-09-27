@@ -3,6 +3,7 @@ import { X, CheckCircle2, Circle, Save, Tag } from 'lucide-react';
 import { Button } from '../common/Button.jsx';
 import { ErrorBanner } from '../common/ErrorBanner.jsx';
 import * as tasksApi from '../../services/tasks.api.js';
+import { TaskAttachments } from '../attachments/TaskAttachments.jsx';
 
 export function TaskDetailDrawer({ task, isOpen, onClose, onTaskUpdated }) {
   const [activeTask, setActiveTask] = useState(task);
@@ -711,6 +712,11 @@ export function TaskDetailDrawer({ task, isOpen, onClose, onTaskUpdated }) {
               </button>
             </form>
           </div>
+
+          {/* Attachments Section (Phase 15: Google Drive) */}
+          {activeTask?.id && (
+            <TaskAttachments taskId={activeTask.id} workspaceId={activeTask.workspaceId} />
+          )}
 
           {/* Metadata section */}
           <div

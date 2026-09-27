@@ -27,6 +27,7 @@ test.describe('Task Management E2E Journeys', () => {
     mockTasks = [
       {
         id: '11111111-1111-1111-1111-111111111111',
+        workspaceId: 'ws-123',
         title: 'Authoritative Architecture Review',
         description: 'Verify system architecture matches specifications',
         status: 'TODO',
@@ -513,5 +514,230 @@ test.describe('Task Management E2E Journeys', () => {
     // Verify task removed from list and empty state shown
     await expect(page.locator('text=Authoritative Architecture Review')).not.toBeVisible();
     await expect(page.locator('text=No tasks found')).toBeVisible();
+  });
+
+  test('TM-GTASK-001 (E2E): Google Tasks connection, task list discovery, synchronization, and disconnect journey', async ({
+    page,
+  }) => {
+    let integrationConnected = false;
+    let syncState = 'DISCONNECTED';
+
+    await page.route('**/api/v1/integrations/google/tasks/status', async route => {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          data: {
+            connected: integrationConnected,
+            status: syncState,
+            connectedAt: integrationConnected ? new Date().toISOString() : null,
+            scopes: integrationConnected ? ['https://www.googleapis.com/auth/tasks'] : [],
+            accountName: integrationConnected ? 'tasks_user@gmail.com' : null,
+          },
+        }),
+      });
+    });
+
+    await page.route('**/api/v1/integrations/google/tasks/connect', async route => {
+      integrationConnected = true;
+      syncState = 'CONNECTED';
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          data: {
+            authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth?mock=1',
+            state: 'mock_tasks_state_123',
+            service: 'TASKS',
+          },
+        }),
+      });
+    });
+
+    await page.route('**/api/v1/integrations/google/tasks/task-lists**', async route => {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          data: [
+            {
+              mappingId: 'map-gtask-1',
+              taskListId: '@default',
+              googleTaskListId: '@default',
+              nativeProjectId: 'proj-1',
+              title: 'My Tasks',
+              isDefault: true,
+              syncState: 'SYNCED',
+            },
+          ],
+        }),
+      });
+    });
+
+    await page.route('**/api/v1/integrations/google/tasks/sync', async route => {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          data: {
+            status: 'SUCCESS',
+            imported: 4,
+            exported: 2,
+            conflicts: 0,
+            syncedAt: new Date().toISOString(),
+          },
+        }),
+      });
+    });
+
+    await page.route('**/api/v1/integrations/google/tasks/disconnect', async route => {
+      integrationConnected = false;
+      syncState = 'DISCONNECTED';
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          data: { disconnected: true },
+        }),
+      });
+    });
+
+    await page.goto('/tasks');
+
+    // 1. Open Google Tasks Sync Modal
+    const syncBtn = page.getByRole('button', { name: 'Google Tasks Sync' });
+    await expect(syncBtn).toBeVisible();
+    await syncBtn.click();
+
+    // Verify modal is open and shows disconnected state
+    const modal = page.locator('div[role="dialog"]');
+    await expect(modal).toBeVisible();
+    await expect(modal.locator('text=Connect Google Tasks')).toBeVisible();
+
+    // 2. Connect
+    const connectBtn = modal.locator('button:has-text("Connect Google Tasks")');
+    await connectBtn.click();
+
+    // 3. Verify connected state and discovered task lists
+    await expect(modal.locator('text=Connected as Google Account')).toBeVisible();
+    await expect(modal.locator('text=My Tasks')).toBeVisible();
+
+    // 4. Trigger Sync
+    const syncNowBtn = modal.locator('button:has-text("Sync Now")');
+    await syncNowBtn.click();
+
+    // Verify sync result banner
+    await expect(modal.locator('text=Sync completed successfully')).toBeVisible();
+
+    // 5. Disconnect Flow with confirmation
+    page.on('dialog', dialog => dialog.accept());
+    const disconnectBtn = modal.locator('button:has-text("Disconnect")');
+    await disconnectBtn.click();
+
+    // Verify return to disconnected state
+    await expect(modal.locator('text=Not connected to Google Tasks')).toBeVisible();
+  });
+
+  test('TM-GDRIVE-001 (E2E): Google Drive attachment lifecycle in task drawer: view, detach, and delete', async ({
+    page,
+  }) => {
+    let mockAttachments = [
+      {
+        id: 'att-1',
+        workspaceId: 'ws-123',
+        targetType: 'TASK',
+        targetId: '11111111-1111-1111-1111-111111111111',
+        fileName: 'system-spec.pdf',
+        mimeType: 'application/pdf',
+        sizeBytes: 1024 * 64,
+        sourceType: 'GOOGLE_DRIVE',
+        externalFileId: 'mock_drive_file_1',
+        uploadStatus: 'COMPLETED',
+        webUrl: 'https://drive.google.com/file/d/mock_drive_file_1/view',
+        createdAt: new Date().toISOString(),
+      },
+    ];
+
+    await page.route('**/api/v1/integrations/google/drive/status', async route => {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          data: {
+            connected: true,
+            status: 'CONNECTED',
+            accountDisplayName: 'drive_user@gmail.com',
+            scopes: ['https://www.googleapis.com/auth/drive.file'],
+          },
+        }),
+      });
+    });
+
+    await page.route('**/api/v1/attachments**', async route => {
+      const method = route.request().method();
+      const url = new URL(route.request().url());
+
+      if (method === 'GET') {
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ data: mockAttachments }),
+        });
+      }
+
+      if (method === 'DELETE') {
+        const isDeleteDriveFile = url.searchParams.get('deleteDriveFile') === 'true';
+        mockAttachments = [];
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            data: {
+              detached: !isDeleteDriveFile,
+              deleted: isDeleteDriveFile,
+              preservedExternalFile: !isDeleteDriveFile,
+              deletedDriveFile: isDeleteDriveFile,
+            },
+          }),
+        });
+      }
+
+      return route.continue();
+    });
+
+    await page.goto('/tasks');
+
+    // Open detail drawer for initial task
+    const editBtn = page.getByRole('button', { name: /Edit Authoritative Architecture Review/i });
+    await editBtn.click();
+
+    const drawer = page.getByRole('dialog', { name: /Task Details/i });
+    await expect(drawer).toBeVisible();
+
+    // Verify Attachments section is displayed with the mapped file
+    await expect(drawer.getByText('Attachments (1)')).toBeVisible();
+    await expect(drawer.getByText('system-spec.pdf')).toBeVisible();
+    await expect(drawer.getByText('64 KB')).toBeVisible();
+
+    // Verify Google Drive external link
+    const driveLink = drawer.locator(
+      'a[href="https://drive.google.com/file/d/mock_drive_file_1/view"]',
+    );
+    await expect(driveLink).toBeVisible();
+
+    // Detach attachment: verify modal explains Drive file will remain intact
+    const detachBtn = drawer.locator('button[title*="Detach from task"]');
+    await detachBtn.click();
+
+    // Verify detach confirmation modal
+    await expect(
+      page.locator('text=The file will remain safely intact in your Google Drive'),
+    ).toBeVisible();
+    const confirmDetachBtn = page.locator('div[role="dialog"] button:has-text("Detach")').last();
+    await confirmDetachBtn.click();
+
+    // Verify attachment removed from drawer list
+    await expect(drawer.getByText('Attachments (0)')).toBeVisible();
+    await expect(drawer.getByText('No files attached yet')).toBeVisible();
   });
 });

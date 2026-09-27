@@ -97,3 +97,193 @@ export async function disconnectGoogleCalendar() {
   });
   return res.data;
 }
+
+/**
+ * Fetch Google Tasks integration status
+ */
+export async function fetchGoogleTasksStatus() {
+  const res = await request(`${API_BASE}/google/tasks/status`);
+  return res.data;
+}
+
+/**
+ * Initiate Google Tasks OAuth authorization
+ */
+export async function connectGoogleTasks(redirectUri) {
+  const res = await request(`${API_BASE}/google/tasks/connect`, {
+    method: 'POST',
+    body: JSON.stringify({ redirectUri }),
+  });
+  return res.data;
+}
+
+/**
+ * Complete Google Tasks OAuth callback
+ */
+export async function completeGoogleTasksCallback(code, state) {
+  const res = await request(`${API_BASE}/google/tasks/callback`, {
+    method: 'POST',
+    body: JSON.stringify({ code, state, service: 'TASKS' }),
+  });
+  return res.data;
+}
+
+/**
+ * Discover/list user's accessible Google task lists
+ */
+export async function fetchGoogleTaskLists(workspaceId) {
+  const qs = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : '';
+  const headers = workspaceId ? { 'x-workspace-id': workspaceId } : {};
+  const res = await request(`${API_BASE}/google/tasks/task-lists${qs}`, { headers });
+  return res.data || [];
+}
+
+/**
+ * Trigger synchronization for Google Tasks
+ */
+export async function syncGoogleTasks(workspaceId, taskListMappingId = null, options = {}) {
+  const qs = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : '';
+  const headers = workspaceId ? { 'x-workspace-id': workspaceId } : {};
+  const res = await request(`${API_BASE}/google/tasks/sync${qs}`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      taskListMappingId,
+      force: options.force || false,
+      async: options.async || false,
+    }),
+  });
+  return res.data;
+}
+
+/**
+ * Disconnect Google Tasks integration
+ */
+export async function disconnectGoogleTasks() {
+  const res = await request(`${API_BASE}/google/tasks/disconnect`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
+  return res.data;
+}
+
+/**
+ * Fetch Google Drive integration status
+ */
+export async function fetchGoogleDriveStatus() {
+  const res = await request(`${API_BASE}/google/drive/status`);
+  return res.data;
+}
+
+/**
+ * Initiate Google Drive OAuth authorization
+ */
+export async function connectGoogleDrive(redirectUri) {
+  const res = await request(`${API_BASE}/google/drive/connect`, {
+    method: 'POST',
+    body: JSON.stringify({ redirectUri }),
+  });
+  return res.data;
+}
+
+/**
+ * Complete Google Drive OAuth callback
+ */
+export async function completeGoogleDriveCallback(code, state) {
+  const res = await request(`${API_BASE}/google/drive/callback`, {
+    method: 'POST',
+    body: JSON.stringify({ code, state, service: 'DRIVE' }),
+  });
+  return res.data;
+}
+
+/**
+ * Get or create dedicated Workaholic Google Drive folder
+ */
+export async function getOrCreateGoogleDriveFolder(workspaceId) {
+  const qs = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : '';
+  const headers = workspaceId ? { 'x-workspace-id': workspaceId } : {};
+  const res = await request(`${API_BASE}/google/drive/folder${qs}`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ workspaceId }),
+  });
+  return res.data;
+}
+
+/**
+ * Upload file to Google Drive
+ */
+export async function uploadGoogleDriveFile(workspaceId, uploadData) {
+  const qs = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : '';
+  const headers = workspaceId ? { 'x-workspace-id': workspaceId } : {};
+  const res = await request(`${API_BASE}/google/drive/upload${qs}`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(uploadData),
+  });
+  return res.data;
+}
+
+/**
+ * Sync / reconcile Google Drive attachment status
+ */
+export async function syncGoogleDriveAttachment(workspaceId, attachmentId) {
+  const qs = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : '';
+  const headers = workspaceId ? { 'x-workspace-id': workspaceId } : {};
+  const res = await request(`${API_BASE}/google/drive/sync${qs}`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ attachmentId }),
+  });
+  return res.data;
+}
+
+/**
+ * Explicitly delete file from Google Drive
+ */
+export async function deleteGoogleDriveFile(workspaceId, fileId) {
+  const qs = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : '';
+  const headers = workspaceId ? { 'x-workspace-id': workspaceId } : {};
+  const res = await request(`${API_BASE}/google/drive/files/${encodeURIComponent(fileId)}${qs}`, {
+    method: 'DELETE',
+    headers,
+  });
+  return res.data;
+}
+
+/**
+ * Disconnect Google Drive integration
+ */
+export async function disconnectGoogleDrive() {
+  const res = await request(`${API_BASE}/google/drive/disconnect`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
+  return res.data;
+}
+
+/**
+ * Fetch synchronization diagnostics
+ */
+export async function fetchSyncDiagnostics(options = {}) {
+  const params = new URLSearchParams();
+  if (options.service) params.set('service', options.service);
+  if (options.status) params.set('status', options.status);
+  if (options.limit) params.set('limit', String(options.limit));
+  if (options.offset) params.set('offset', String(options.offset));
+  const qs = params.toString() ? `?${params.toString()}` : '';
+  const res = await request(`${API_BASE}/google/diagnostics${qs}`);
+  return res.data;
+}
+
+/**
+ * Trigger synchronization recovery / reset stale locks
+ */
+export async function recoverSync(recoveryOptions = {}) {
+  const res = await request(`${API_BASE}/google/recover`, {
+    method: 'POST',
+    body: JSON.stringify(recoveryOptions),
+  });
+  return res.data;
+}

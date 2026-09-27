@@ -4,11 +4,12 @@ import * as extMappingsRepo from '../external-mappings.repository.js';
 import * as calendarsRepo from '../../calendar/calendars.repository.js';
 import * as eventsRepo from '../../calendar/events.repository.js';
 import * as recurrenceRepo from '../../recurrence/recurrence.repository.js';
-import { oauthBoundaryService } from '../../auth/oauth-boundary.service.js';
+import { oauthBoundaryService, GOOGLE_API_SCOPES } from '../../auth/oauth-boundary.service.js';
 import * as integrationsRepo from '../../auth/integrations.repository.js';
 import { defaultGoogleCalendarAdapter } from './google-calendar.adapter.js';
 import { toWorkaholicEvent, toGoogleEvent } from './google-calendar.mapper.js';
 import { SYNC_STATE } from '@workaholic/shared';
+import { syncCoordinator } from '../sync-coordinator.js';
 
 /**
  * Google Calendar Synchronization Service
@@ -239,6 +240,7 @@ export class GoogleCalendarSyncService {
     let createdCount = 0;
     let updatedCount = 0;
     let deletedCount = 0;
+    let conflictedCount = 0;
 
     await withTransaction(async txClient => {
       for (const item of items) {
@@ -302,16 +304,19 @@ export class GoogleCalendarSyncService {
             const nativeModified = new Date(nativeEvent.updatedAt).getTime();
             const externalModified = item.updated ? new Date(item.updated).getTime() : 0;
 
+            // Apply clock skew and sub-second precision tolerance (1000ms threshold)
+            const CLOCK_SKEW_THRESHOLD_MS = 1000;
             const isNativeModified = nativeModified > lastNativeSync;
             const isExternalModified =
               (item.etag && eventMapping.externalEtag && item.etag !== eventMapping.externalEtag) ||
-              externalModified > lastExtSync;
+              externalModified - lastExtSync > CLOCK_SKEW_THRESHOLD_MS;
 
             // Conflict resolution per docs/8.SYNC-SPECIFICATION.md Section 55 & docs/9.CALENDAR-SPECIFICATION.md Section 39:
             // If conflict: for Google-originated events (sourceType === 'GOOGLE'), Google is authoritative.
             if (isNativeModified && isExternalModified) {
               if (nativeEvent.sourceType !== 'GOOGLE') {
                 // Native is authoritative for native-created events; mark CONFLICT state
+                conflictedCount++;
                 await extMappingsRepo.updateMapping(
                   eventMapping.id,
                   {
@@ -494,6 +499,7 @@ export class GoogleCalendarSyncService {
       created: createdCount,
       updated: updatedCount,
       deleted: deletedCount,
+      conflicts: conflictedCount,
       nextSyncToken: nextSyncToken || activeCalMapping.syncCursor,
     };
   }
@@ -599,80 +605,121 @@ export class GoogleCalendarSyncService {
    * @param {Object} [adapterOverride]
    */
   async syncCalendar(userId, workspaceId, calendarMappingId, options = {}, adapterOverride = null) {
-    const { integration } = await this._getValidCredentials(userId);
+    await this._getValidCredentials(userId);
 
-    // Update status to SYNCING
-    await integrationsRepo.updateIntegrationStatus(integration.id, 'SYNCING');
-
-    try {
-      // 1. Inward sync: Import Google changes
-      const importStats = await this.importEvents(
+    return syncCoordinator.runWithHardening(
+      {
         userId,
         workspaceId,
-        calendarMappingId,
-        options,
-        adapterOverride,
-      );
+        service: 'CALENDAR',
+        targetId: calendarMappingId || 'all',
+        direction: options.direction || 'BIDIRECTIONAL',
+        operationType: options.force ? 'FULL' : 'INCREMENTAL',
+      },
+      async () => {
+        // 1. Inward sync: Import Google changes
+        const importStats = await this.importEvents(
+          userId,
+          workspaceId,
+          calendarMappingId,
+          options,
+          adapterOverride,
+        );
 
-      // 2. Outward sync: Export any unmapped native events in that calendar
-      const dbRes = await pool.query(
-        `SELECT id, source_type FROM events WHERE calendar_id = $1 AND workspace_id = $2 AND deleted_at IS NULL`,
-        [importStats.calendarId, workspaceId],
-      );
+        // 2. Outward sync: Export any unmapped or locally updated native events in that calendar
+        const dbRes = await pool.query(
+          `SELECT id, source_type, updated_at FROM events WHERE calendar_id = $1 AND workspace_id = $2 AND deleted_at IS NULL`,
+          [importStats.calendarId, workspaceId],
+        );
 
-      let exportCount = 0;
-      for (const evt of dbRes.rows) {
-        if (evt.source_type !== 'GOOGLE') {
-          const mapping = await extMappingsRepo.findMappingByNativeId(
-            'GOOGLE',
-            userId,
-            'EVENT',
-            evt.id,
-          );
-          if (!mapping) {
-            await this.exportEvent(userId, workspaceId, evt.id, adapterOverride);
-            exportCount++;
+        let exportCount = 0;
+        for (const evt of dbRes.rows) {
+          if (evt.source_type !== 'GOOGLE') {
+            const mapping = await extMappingsRepo.findMappingByNativeId(
+              'GOOGLE',
+              userId,
+              'EVENT',
+              evt.id,
+            );
+            if (!mapping) {
+              await this.exportEvent(userId, workspaceId, evt.id, adapterOverride);
+              exportCount++;
+            } else if (mapping.syncState !== SYNC_STATE.CONFLICT) {
+              const lastNativeSync = mapping.lastNativeModifiedAt
+                ? new Date(mapping.lastNativeModifiedAt).getTime()
+                : mapping.lastSyncedAt
+                  ? new Date(mapping.lastSyncedAt).getTime()
+                  : 0;
+              const nativeModified = new Date(evt.updated_at).getTime();
+              // Only export if native event was modified since last sync
+              if (nativeModified > lastNativeSync) {
+                await this.exportEvent(userId, workspaceId, evt.id, adapterOverride);
+                exportCount++;
+              }
+            }
           }
         }
-      }
 
-      // Restore status to CONNECTED
-      await integrationsRepo.updateIntegrationStatus(integration.id, 'CONNECTED');
-
-      return {
-        status: 'SUCCESS',
-        calendarId: importStats.calendarId,
-        googleCalendarId: importStats.googleCalendarId,
-        imported: importStats.created + importStats.updated,
-        deleted: importStats.deleted,
-        exported: exportCount,
-        syncedAt: new Date().toISOString(),
-      };
-    } catch (err) {
-      const isReauth = err.reauthRequired || err.code === 'REAUTH_REQUIRED';
-      await integrationsRepo.updateIntegrationStatus(
-        integration.id,
-        isReauth ? 'REAUTH_REQUIRED' : 'ERROR',
-      );
-      throw err;
-    }
+        return {
+          calendarId: importStats.calendarId,
+          googleCalendarId: importStats.googleCalendarId,
+          imported: importStats.created + importStats.updated,
+          created: importStats.created,
+          updated: importStats.updated,
+          deleted: importStats.deleted,
+          conflicts: importStats.conflicts || 0,
+          exported: exportCount,
+          examined: importStats.created + importStats.updated + importStats.deleted + exportCount,
+        };
+      },
+    );
   }
 
   /**
-   * Disconnects Google Calendar integration while strictly preserving all native calendar data.
+   * Disconnects Google Calendar integration while strictly preserving all native calendar data
+   * and any other connected Google capabilities (e.g. Google Tasks).
    * Conforms to docs/8.SYNC-SPECIFICATION.md Section 58 & docs/9.CALENDAR-SPECIFICATION.md Section 41
    */
   async disconnect(userId, client = pool) {
-    // 1. Remove integration and encrypted credentials
-    await oauthBoundaryService.disconnectGoogleIntegration(userId, client);
+    const integration = await integrationsRepo.findIntegration(userId, 'GOOGLE', client);
+    if (!integration || integration.status === 'DISCONNECTED') {
+      return { disconnected: true, preservedData: true };
+    }
 
-    // 2. Mark mappings as DETACHED to retain historical identity provenance without active sync
+    const account = await integrationsRepo.findExternalAccount(integration.id, 'GOOGLE', client);
+
+    // 1. Mark only CALENDAR and EVENT mappings as DETACHED to retain historical identity provenance without active sync
     const sql = `
       UPDATE external_object_mappings
       SET sync_state = 'DETACHED', updated_at = CURRENT_TIMESTAMP
-      WHERE user_id = $1 AND provider = 'GOOGLE';
+      WHERE user_id = $1 AND provider = 'GOOGLE' AND native_object_type IN ('CALENDAR', 'EVENT');
     `;
-    await pool.query(sql, [userId]);
+    await (client || pool).query(sql, [userId]);
+
+    // 2. Remove CALENDAR scopes from external_accounts if multiple services exist
+    if (account) {
+      const remainingScopes = (account.scopes || []).filter(
+        s => !GOOGLE_API_SCOPES.CALENDAR.includes(s),
+      );
+
+      if (remainingScopes.length === 0) {
+        await oauthBoundaryService.disconnectGoogleIntegration(userId, client);
+      } else {
+        await integrationsRepo.upsertExternalAccount(
+          {
+            integrationId: integration.id,
+            provider: 'GOOGLE',
+            externalAccountId: account.externalAccountId,
+            displayName: account.displayName,
+            scopes: remainingScopes,
+            encryptedCredentials: account.encryptedCredentials,
+          },
+          client,
+        );
+      }
+    } else {
+      await oauthBoundaryService.disconnectGoogleIntegration(userId, client);
+    }
 
     return {
       disconnected: true,

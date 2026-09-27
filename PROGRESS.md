@@ -1539,3 +1539,232 @@ Established a general-purpose, robust PostgreSQL-backed asynchronous background 
 
 - **Phase 13 Status**: **COMPLETE & VERIFIED**
 - **Next Phase**: Phase 14 — Google Tasks Integration
+
+---
+
+## Phase 14: Google Tasks Integration
+
+> **Implementation & Verification Status**: **COMPLETE & VERIFIED**  
+> **Test Results**: Vitest 570/570 passing (52 test files, +30 tests added in Phase 14), Playwright 45/45 passing (+1 E2E journey added), JS-only 100%, ESLint 0 errors / 0 warnings, Prettier 100%, Migrations up to date.
+
+### Core Deliverables Implemented & Verified
+
+1. **OAuth 2.0 Multi-Service Scope Union (`oauth-boundary.service.js`)**:
+   - Reused Phase 13 Google OAuth 2.0 infrastructure without creating duplicate authentication systems.
+   - Enforced minimum required Tasks scope (`https://www.googleapis.com/auth/tasks`) via `GOOGLE_API_SCOPES.TASKS`.
+   - Updated `exchangeAuthorizationCode` to union existing and new scopes, allowing users to connect Google Calendar, Google Tasks, or both independently without dropping credentials or permissions.
+   - Preserved server-side encrypted credentials at rest via AES-256-GCM; zero plaintext tokens exposed to client bundles, frontend storage, API responses, or logs.
+
+2. **Database Migration & Schema Normalization (`1725628812000_enhance_external_mappings_for_google_tasks.sql`)**:
+   - Extended `external_object_mappings` check constraints to support `external_object_type = 'TASK_LIST'` and `native_object_type = 'PROJECT'`.
+   - Added provenance tracking columns `source_type` (`'WORKAHOLIC'`, `'GOOGLE'`, `'IMPORTED'`) and `source_reference` (external object identifier) to the `tasks` table with index `idx_tasks_source_reference`.
+   - Native Workaholic IDs remain completely decoupled from external Google Task IDs (`REQ-GTASK-003`).
+
+3. **Google Tasks API Adapter & Mapper (`google-tasks.adapter.js`, `google-tasks.mapper.js`)**:
+   - Created pure JavaScript `GoogleTasksAdapter` encapsulating Google Tasks REST API (`/users/@me/lists`, `/lists/{listId}/tasks`).
+   - Implemented `MockGoogleTasksAdapter` providing deterministic, in-memory state for automated unit and integration testing without external network flakiness.
+   - Implemented bidirectional mapper:
+     - Preserves rich native metadata (`priority`, `labels`, `estimatedDuration`, `recurrenceRuleId`, `assignedTo`) without data loss (`REQ-GTASK-004`).
+     - Maps statuses between Google (`needsAction` / `completed`) and Workaholic (`TODO` / `IN_PROGRESS` / `BLOCKED` / `COMPLETED` / `CANCELLED`).
+     - Preserves due date timestamps and parent/child subtask hierarchies.
+
+4. **Two-Way Synchronization Engine (`google-tasks-sync.service.js`)**:
+   - **Task List Discovery**: Maps Google Task Lists to Workaholic Project containers and stores persistent `external_object_mappings` records (`REQ-GTASK-001`).
+   - **Inbound Sync**: Imports new and modified external tasks, assigns `source_type = 'GOOGLE'`, and updates mapping boundaries.
+   - **Outbound Sync**: Detects native changes and updates Google Tasks with completion timestamps.
+   - **Deletion Semantics**: External deletion marks mapping `DELETED_EXTERNALLY` and transitions native task to `CANCELLED` without hard-deleting native records. Native tasks survive disconnect (`REQ-GTASK-005`).
+   - **Deterministic Conflict Resolution**: Conforms to `docs/8.SYNC-SPECIFICATION.md` (Cases A, B, C, D, E). Native modifications take precedence in simultaneous conflicts and record conflict states without infinite sync loops.
+
+5. **Phase 12 Background Queue Dispatcher (`google-sync-dispatcher.js`)**:
+   - Registered `JOB_TYPE.GOOGLE_TASKS_SYNC` and `JOB_TYPE.TASKS_SYNC` handlers on `jobQueue`.
+   - `enqueueGoogleTasksSync`: Uses deterministic deduplication key (`google_tasks_sync_{userId}_{keyTarget}`) on queue `'sync'`.
+   - Handles transient rate limit errors (`429`) with bounded exponential backoff retries.
+
+6. **Web Client Integration & UI (`GoogleTasksSyncModal.jsx`, `TasksPage.jsx`)**:
+   - Added "Google Tasks" button to `TasksPage.jsx` header.
+   - Implemented `GoogleTasksSyncModal.jsx` displaying connection status, discovered task lists, default list badges, manual "Sync Now" trigger, error states, and safe disconnect confirmation.
+   - Full Playwright E2E browser journey (TM-GTASK-001) verifying disconnect -> connect -> discover task lists -> sync -> safe disconnect.
+
+---
+
+### Final Architectural Audit Breakdown
+
+- **1. Google-wide Disconnect Behavior**:
+  - `POST /api/v1/integrations/google/tasks/disconnect`: Scoped strictly to Tasks. Detaches `TASK` and `TASK_LIST` mappings, filters out Tasks OAuth scopes, and preserves Google Calendar credentials and mappings if Calendar is still authorized.
+  - `POST /api/v1/integrations/google/calendar/disconnect`: Scoped strictly to Calendar. Detaches `CALENDAR` and `EVENT` mappings, filters out Calendar OAuth scopes, and preserves Google Tasks credentials and mappings if Tasks is still authorized.
+  - `DELETE /api/v1/integrations/google`: Global integration disconnect. Completely disconnects the Google integration, detaches all Google mappings, and wipes external account credentials.
+  - Verified with automated coexistence integration tests (`google-tasks-sync.test.js`).
+
+- **2. Task List → Project Mapping**:
+  - Google Task Lists map to Workaholic Project containers via `external_object_mappings` (`TASK_LIST` -> `PROJECT`).
+  - Native projects remain first-class Workaholic entities. Pre-existing projects survive external list disconnect; only external mappings are detached.
+  - Native inbox tasks without a project remain supported; external task identity is decoupled from native project identity.
+
+- **3. Native Feature Preservation**:
+  - Workaholic fields unsupported by Google Tasks (`priority`, `labels`, `estimatedDuration`, `recurrenceRuleId`, `assignedTo`, dependencies, attachments) are strictly preserved.
+  - The provider mapper never overwrites missing external fields with `null`, defaults, or empty arrays.
+
+- **4. Synchronization & Conflict Semantics**:
+  - Evaluated and verified against `SYNC-SPECIFICATION.md`:
+    - Native-only change propagates externally.
+    - External-only change propagates natively.
+    - Simultaneous conflict applies deterministic native precedence with conflict state tracking.
+    - No-op sync generates zero spurious mutations.
+    - External deletion transitions native task to `CANCELLED` and mapping to `DELETED_EXTERNALLY` (no destructive hard deletes).
+
+- **5. Tenant Isolation & Security Boundary**:
+  - All endpoints enforce workspace and user boundaries (`requireAuth`, `userId` filtering).
+  - External credentials remain encrypted via AES-256-GCM; zero credentials leaked in responses or client state.
+
+---
+
+### Verification Results
+
+| Check / Requirement             | Status   | Details                                                                                  |
+| ------------------------------- | -------- | ---------------------------------------------------------------------------------------- |
+| **Strict JavaScript-Only**      | **PASS** | `npm run check:js-only`: 0 TypeScript files across entire monorepo                       |
+| **ESLint 9 Flat Config**        | **PASS** | `npm run lint`: 0 errors, 0 warnings across all workspaces                               |
+| **Prettier Formatting**         | **PASS** | `npm run format:check`: 100% matched files use Prettier code style                       |
+| **Google Tasks Focused Vitest** | **PASS** | `npx vitest run apps/backend/tests/google-tasks-sync.test.js`: 25/25 passed              |
+| **Google Tasks Web Component**  | **PASS** | `npx vitest run apps/web/tests/google-tasks-sync.test.jsx`: 5/5 passed                   |
+| **Google Calendar Regression**  | **PASS** | `npx vitest run apps/backend/tests/google-calendar-sync.test.js`: 25/25 passed           |
+| **Full Vitest Test Suite**      | **PASS** | `npm test`: 570/570 passed across 52 test files                                          |
+| **Playwright E2E Suite**        | **PASS** | `npx playwright test`: 45/45 passed (including TM-GTASK-001 in `e2e/tasks.spec.js`)      |
+| **Live Database Migrations**    | **PASS** | `npm --workspace=@workaholic/backend run migrate:status`: All migrations applied cleanly |
+| **Vite Production Build**       | **PASS** | `npm run build`: Production bundle built cleanly in 1.92s                                |
+| **Credential / Log Leak Audit** | **PASS** | 0 secrets or tokens exposed in responses, storage, frontend bundles, or logs             |
+
+- **Phase 14 Status**: **COMPLETE & VERIFIED**
+- **Next Phase**: Phase 15 — Google Drive Integration
+
+---
+
+## Phase 15: Google Drive Integration
+
+### Overview
+
+Implemented **Google Drive-backed attachment storage and synchronization** for Workaholic conforming to `docs/1.project.md`, `docs/2.requirements.md` (`REQ-GDRIVE-001` through `REQ-GDRIVE-006`), `docs/7.DATABASE-DESIGN.md` Section 27, `docs/8.SYNC-SPECIFICATION.md` Section 61–63, `docs/15.API-SPECIFICATION.md` Section 47, `docs/19.INTEGRATION-SPECIFICATION.md` Section 25–29, and `AGENTS.md`.
+
+Workaholic attachments leverage user-authorized Google Drive storage while preserving native attachment relationship authority, tenant and workspace isolation, deterministic folder discovery, and strict distinction between non-destructive attachment detach and explicit, permission-gated Drive file deletion.
+
+---
+
+### Core Deliverables Implemented & Verified
+
+1. **OAuth 2.0 Multi-Service Scope Lifecycle (`oauth-boundary.service.js`)**:
+   - Reused existing Google OAuth 2.0 foundation without creating parallel authentication implementations.
+   - Enforced minimum required Drive scope (`https://www.googleapis.com/auth/drive.file`) via `GOOGLE_API_SCOPES.DRIVE`.
+   - Enhanced multi-service scope unioning: users can authorize any combination of Google Calendar, Google Tasks, and Google Drive independently.
+   - Disconnecting Google Drive (`POST /api/v1/integrations/google/drive/disconnect`) filters out the Drive scope and detaches Drive file mappings while leaving Calendar and Tasks credentials, mappings, and sync states completely unaffected.
+   - Refresh tokens remain encrypted at rest via AES-256-GCM. Zero tokens exposed in API payloads, browser storage, or logs.
+
+2. **Database Migration & Schema Normalization (`1725628813000_create_attachments_and_drive_mappings.sql`)**:
+   - Created authoritative `attachments` table conforming to `docs/7.DATABASE-DESIGN.md` Section 27.1 (`id`, `workspace_id`, `target_type`, `target_id`, `source_type`, `file_name`, `mime_type`, `size_bytes`, `external_file_id`, `upload_status`, `web_url`).
+   - Created `external_files` cache table conforming to Section 27.2 (`provider`, `external_file_id`, `name`, `mime_type`, `size_bytes`, `external_parent_id`).
+   - Extended `external_object_mappings` check constraints to support `external_object_type IN ('FILE', 'FOLDER')` and `native_object_type = 'ATTACHMENT'`.
+   - Native Workaholic UUIDs remain completely decoupled from external Google Drive file IDs (`REQ-GDRIVE-003`).
+
+3. **Dedicated Workaholic Drive Folder (`google-drive-sync.service.js`)**:
+   - Idempotently creates and reuses a dedicated folder named `'Workaholic Attachments'` in the user's Google Drive (`REQ-GDRIVE-006`).
+   - Mapped in `external_object_mappings` with `external_object_type = 'FOLDER'` and `native_object_type = 'WORKSPACE'`.
+   - Safely detects missing or externally trashed folders; cleans up stale mappings before re-creating to avoid database constraint violations.
+
+4. **Upload Flow & External Mapping (`attachments.routes.js`, `google-drive.adapter.js`)**:
+   - Implemented upload pipeline: validates file and workspace permissions -> creates native attachment record with `UPLOAD_STATUS.PENDING` -> executes Drive file upload -> persists `external_object_mappings` and `external_files` -> marks attachment as `COMPLETED`.
+   - Supports retryable failed uploads via background job queue with transient error classification (network timeout, rate limit).
+
+5. **Critical Detach Semantics vs. Explicit Drive Deletion (`REQ-GDRIVE-004`, `REQ-GDRIVE-005`)**:
+   - **Detach (`DELETE /api/v1/attachments/:id`)**: Removes the native Workaholic attachment relationship only. The external Google Drive file is **NEVER** deleted, and remains safely intact in the user's Drive.
+   - **Explicit Deletion (`DELETE /api/v1/attachments/:id?deleteDriveFile=true` or `DELETE /api/v1/integrations/google/drive/files/:fileId`)**: Permitted only via an explicit, dedicated user action requiring confirmation. Calls Drive API `deleteFile` and cleans up external mappings. Already-deleted external files are handled idempotently (`404` -> success).
+
+6. **External File Edge Cases (`docs/8.SYNC-SPECIFICATION.md` Section 62)**:
+   - Missing external files: marked as `SYNC_STATE.DELETED_EXTERNALLY` and attachment status updated to `FAILED` without crashing sync.
+   - Externally trashed files: detected via `trashed: true` and mapped to `DELETED_EXTERNALLY`.
+   - Moved files: parent folder update updates mapping container ID while preserving immutable Drive file ID.
+   - Token revocation: triggers standard 401 re-auth flow without destroying native attachment metadata.
+
+7. **Background Queue Dispatcher (`google-sync-dispatcher.js`)**:
+   - Registered `JOB_TYPE.GOOGLE_DRIVE_UPLOAD` and `JOB_TYPE.GOOGLE_DRIVE_SYNC` on Phase 12 `jobQueue`.
+   - Uses deterministic deduplication key (`google_drive_upload_{userId}_{targetId}_{fileName}`) on queue `'sync'`.
+   - Classifies HTTP 429 rate limit responses as transient for bounded exponential backoff retries.
+
+8. **Web Client Integration & UI (`GoogleDriveModal.jsx`, `TaskAttachments.jsx`, `TaskDetailDrawer.jsx`)**:
+   - Created `GoogleDriveModal.jsx` for Drive OAuth initiation, active status display, dedicated folder confirmation, and safe disconnect dialog.
+   - Created `TaskAttachments.jsx` embedded in `TaskDetailDrawer.jsx`:
+     - Displays attachments list with file icons, formatted sizes, synced badges, and direct external Google Drive links.
+     - Upload button with file picker and upload progress indicator.
+     - Separate Detach button (with dialog warning that Drive file remains preserved).
+     - Explicit Delete button (with prominent red destructive confirmation dialog).
+   - Created E2E test `TM-GDRIVE-001` in `e2e/tasks.spec.js` testing complete attachment lifecycle.
+
+---
+
+### Verification Results
+
+| Check / Requirement             | Status   | Details                                                                                  |
+| ------------------------------- | -------- | ---------------------------------------------------------------------------------------- |
+| **Strict JavaScript-Only**      | **PASS** | `npm run check:js-only`: 0 TypeScript files across entire monorepo                       |
+| **ESLint 9 Flat Config**        | **PASS** | `npm run lint`: 0 errors, 0 warnings across all workspaces                               |
+| **Prettier Formatting**         | **PASS** | `npm run format:check`: 100% matched files use Prettier code style                       |
+| **Google Drive Focused Vitest** | **PASS** | `npx vitest run apps/backend/tests/google-drive-sync.test.js`: 26/26 passed              |
+| **Google Drive Web Vitest**     | **PASS** | `npx vitest run apps/web/tests/google-drive-attachments.test.jsx`: 9/9 passed            |
+| **Google Tasks Regression**     | **PASS** | `npx vitest run apps/backend/tests/google-tasks-sync.test.js`: 25/25 passed              |
+| **Google Calendar Regression**  | **PASS** | `npx vitest run apps/backend/tests/google-calendar-sync.test.js`: 25/25 passed           |
+| **Full Vitest Test Suite**      | **PASS** | `npm test`: 605/605 passed across 54 test files (+35 tests added in Phase 15)            |
+| **Playwright E2E Suite**        | **PASS** | `npx playwright test`: 46/46 passed (including TM-GDRIVE-001 in `e2e/tasks.spec.js`)     |
+| **Live Database Migrations**    | **PASS** | `npm --workspace=@workaholic/backend run migrate:status`: All migrations applied cleanly |
+| **Vite Production Build**       | **PASS** | `npm run build`: Production bundle built cleanly in 7.60s                                |
+| **Security & Privacy Audit**    | **PASS** | 0 secrets/tokens exposed; encrypted credentials at rest; tenant and workspace isolation  |
+
+- **Phase 15 Status**: **COMPLETE & VERIFIED**
+- **Next Phase**: Phase 16 — Synchronization Hardening
+
+---
+
+## Phase 16: Synchronization Hardening (Complete)
+
+### Implementation Overview
+
+Phase 16 hardened the bidirectional synchronization engine across Google Calendar, Google Tasks, and Google Drive integrations, delivering production reliability under real-world network, concurrency, and distributed state conditions:
+
+1. **Explicit Synchronization State Machine**:
+   - Implemented standard states: `IDLE`, `SYNCING`, `SUCCEEDED`, `FAILED`, `RETRYING`, `CONFLICT`, `DETACHED`, `UNAVAILABLE`.
+   - Built state transition validator (`sync-state-machine.js`) preventing invalid state jumps.
+   - Enforced stale sync threshold (15 minutes) with automatic lock reclamation and status restoration.
+2. **Idempotency & Convergence Engine**:
+   - Guarantee: Sync #1 applies delta; Sync #2 produces 0 changes, 0 duplicate events/tasks, 0 provider writes; Sync #3 converges to stable identical state.
+   - Strict timestamp comparison (`nativeModified > lastNativeSync`) prevents spurious provider writes while correctly detecting millisecond-level local modifications.
+   - External etags and modification times are tracked with clock skew tolerance for cross-system delta identification.
+3. **Provider Error Classification & Bounded Exponential Backoff**:
+   - Canonical categories: `AUTHENTICATION`, `RATE_LIMIT`, `TRANSIENT`, `NOT_FOUND`, `VALIDATION`, `CONFLICT`, `PERMANENT`, `UNKNOWN`.
+   - Granular failure reasons (`AUTHORIZATION_REVOKED`, `PROVIDER_RATE_LIMIT`, `PROVIDER_UNAVAILABLE`, `NETWORK_FAILURE`, `INVALID_MAPPING`, `PERMISSION_DENIED`, etc.).
+   - Retryable classifications integrated with Phase 12 PostgreSQL JobQueue.
+4. **Recovery & Resynchronization Architecture**:
+   - Automated recovery for expired sync tokens / cursors (HTTP 410 Gone fallback to full sync).
+   - In-flight mutex locks per `userId:service:targetId` to eliminate concurrent overlapping sync executions.
+   - Job queue deduplication keys (`google-sync:{userId}:{service}:{targetId}`) to prevent redundant background queue build-up.
+   - Self-service recovery endpoint (`POST /api/v1/integrations/google/recover`) to clear stale sync locks and invalidate stale cursors.
+5. **Synchronization Diagnostics & Observability**:
+   - PostgreSQL schema migration `1725628814000_create_sync_diagnostics.sql` creating tenant-isolated `sync_diagnostics` table.
+   - Repository `sync-diagnostics.repository.js` tracking correlation IDs, timings, counters (examined, created, updated, deleted, conflicts), error classifications, and retry states.
+   - Public diagnostic endpoint (`GET /api/v1/integrations/google/diagnostics`) with sanitized output strictly scrubbing tokens and credentials.
+
+### Verification Results
+
+| Check / Requirement                 | Status   | Details                                                                                  |
+| ----------------------------------- | -------- | ---------------------------------------------------------------------------------------- |
+| **Strict JavaScript-Only**          | **PASS** | `npm run check:js-only`: 0 TypeScript files across entire monorepo                       |
+| **ESLint 9 Flat Config**            | **PASS** | `npm run lint`: 0 errors, 0 warnings across all workspaces                               |
+| **Prettier Formatting**             | **PASS** | `npm run format:check`: 100% matched files use Prettier code style                       |
+| **Sync Hardening Focused Vitest**   | **PASS** | `npx vitest run apps/backend/tests/sync-hardening.test.js`: 24/24 passed                 |
+| **Google Calendar Sync Regression** | **PASS** | `npx vitest run apps/backend/tests/google-calendar-sync.test.js`: 25/25 passed           |
+| **Google Tasks Sync Regression**    | **PASS** | `npx vitest run apps/backend/tests/google-tasks-sync.test.js`: 25/25 passed              |
+| **Google Drive Sync Regression**    | **PASS** | `npx vitest run apps/backend/tests/google-drive-sync.test.js`: 26/26 passed              |
+| **Full Vitest Test Suite**          | **PASS** | `npm test`: 629/629 passed across 55 test files (+24 tests added in Phase 16)            |
+| **Playwright E2E Suite**            | **PASS** | `npx playwright test`: 46/46 passed across 7 spec files                                  |
+| **Live Database Migrations**        | **PASS** | `npm --workspace=@workaholic/backend run migrate:status`: All migrations applied cleanly |
+| **Vite Production Build**           | **PASS** | `npm run build`: Production bundle built cleanly in 2.14s                                |
+| **Security & Privacy Audit**        | **PASS** | 0 secrets/tokens exposed in diagnostics; tenant isolation strictly verified              |
+
+- **Phase 16 Status**: **COMPLETE & VERIFIED**
+- **Next Phase**: Phase 17 — Notes
