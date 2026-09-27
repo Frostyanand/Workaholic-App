@@ -10,6 +10,8 @@ import {
   CALENDAR_SOURCE,
   CALENDAR_VISIBILITY,
   EVENT_VISIBILITY,
+  RECURRENCE_FREQUENCY,
+  RECURRENCE_EDIT_MODE,
 } from '../constants/index.js';
 
 export const idSchema = z.string().uuid({ message: 'Invalid UUID identifier' });
@@ -22,6 +24,54 @@ export const idempotencyKeySchema = z
 export const paginationQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(100).default(20),
   cursor: z.string().optional(),
+});
+
+export const recurrenceRuleSchema = z
+  .object({
+    frequency: z.nativeEnum(RECURRENCE_FREQUENCY),
+    interval: z.coerce.number().int().positive().default(1),
+    byWeekday: z.array(z.coerce.number().int().min(0).max(6)).nullable().optional(),
+    byMonthDay: z.array(z.coerce.number().int().min(1).max(31)).nullable().optional(),
+    byMonth: z.array(z.coerce.number().int().min(1).max(12)).nullable().optional(),
+    bySetPos: z.coerce.number().int().min(-366).max(366).nullable().optional(),
+    startAt: z.string().datetime({ message: 'startAt must be a valid ISO 8601 string' }).optional(),
+    endAt: z
+      .string()
+      .datetime({ message: 'endAt must be a valid ISO 8601 string' })
+      .nullable()
+      .optional(),
+    occurrenceCount: z.coerce.number().int().positive().nullable().optional(),
+    timezone: z.string().trim().max(100).default('UTC'),
+  })
+  .superRefine((data, ctx) => {
+    if (data.endAt && data.occurrenceCount) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Cannot specify both endAt (UNTIL) and occurrenceCount (COUNT)',
+        path: ['endAt'],
+      });
+    }
+  });
+
+export const editOccurrenceSchema = z.object({
+  editMode: z.nativeEnum(RECURRENCE_EDIT_MODE).default(RECURRENCE_EDIT_MODE.THIS),
+  title: z.string().trim().min(1).max(255).optional(),
+  description: z.string().trim().max(10000).nullable().optional(),
+  startAt: z.string().datetime().optional(),
+  endAt: z.string().datetime().optional(),
+  isAllDay: z.boolean().optional(),
+  startDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  endDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  location: z.string().trim().max(500).nullable().optional(),
+  meetingUrl: z.string().trim().max(1000).nullable().optional(),
+  status: z.string().optional(),
+  recurrence: recurrenceRuleSchema.optional(),
 });
 
 export const createTaskSchema = z.object({
@@ -54,6 +104,8 @@ export const createTaskSchema = z.object({
     .nonnegative('estimatedDuration cannot be negative')
     .nullable()
     .optional(),
+  recurrenceRuleId: z.string().uuid().nullable().optional(),
+  recurrence: recurrenceRuleSchema.nullable().optional(),
 });
 
 export const updateTaskSchema = createTaskSchema.partial().extend({
@@ -415,6 +467,7 @@ export const createEventSchema = z
     sourceType: z.nativeEnum(CALENDAR_SOURCE).default(CALENDAR_SOURCE.WORKAHOLIC),
     sourceReference: z.string().trim().max(255).nullable().optional(),
     recurrenceRuleId: z.string().uuid().nullable().optional(),
+    recurrence: recurrenceRuleSchema.nullable().optional(),
     timezone: z.string().trim().max(100).default('UTC'),
     isAllDay: z.boolean().default(false),
     startAt: z.string().nullable().optional(),
@@ -525,6 +578,7 @@ export const updateEventSchema = z
     sourceType: z.nativeEnum(CALENDAR_SOURCE).optional(),
     sourceReference: z.string().trim().max(255).nullable().optional(),
     recurrenceRuleId: z.string().uuid().nullable().optional(),
+    recurrence: recurrenceRuleSchema.nullable().optional(),
     timezone: z.string().trim().max(100).optional(),
     isAllDay: z.boolean().optional(),
     startAt: z.string().nullable().optional(),

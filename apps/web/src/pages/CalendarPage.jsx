@@ -18,6 +18,8 @@ import {
   createEvent as apiCreateEvent,
   updateEvent as apiUpdateEvent,
   deleteEvent as apiDeleteEvent,
+  editOccurrence as apiEditOccurrence,
+  cancelOccurrence as apiCancelOccurrence,
 } from '../services/calendar.api.js';
 import { getWeekDates, getMonthMatrix, toLocalDateString } from '../utils/calendar.js';
 
@@ -180,10 +182,17 @@ export function CalendarPage() {
     setIsCreateModalOpen(true);
   }
 
-  // Create Event Submit
+  // Create / Update Event Submit
   async function handleCreateEventSubmit(payload) {
     if (editingEvent) {
-      await apiUpdateEvent(editingEvent.id, workspaceId, payload);
+      if (editingEvent.isRecurring && payload.editMode && payload.editMode !== 'SERIES') {
+        const baseId = editingEvent.baseEventId || editingEvent.id;
+        const occKey = editingEvent.occurrenceKey;
+        await apiEditOccurrence(baseId, occKey, workspaceId, payload);
+      } else {
+        const targetId = editingEvent.baseEventId || editingEvent.id;
+        await apiUpdateEvent(targetId, workspaceId, payload);
+      }
     } else {
       await apiCreateEvent(workspaceId, payload);
     }
@@ -191,8 +200,15 @@ export function CalendarPage() {
   }
 
   // Delete Event Submit
-  async function handleDeleteEvent(eventId) {
-    await apiDeleteEvent(eventId, workspaceId);
+  async function handleDeleteEvent(eventOrId, mode = 'SERIES') {
+    if (typeof eventOrId === 'object' && eventOrId.isRecurring && mode === 'THIS') {
+      const baseId = eventOrId.baseEventId || eventOrId.id;
+      const occKey = eventOrId.occurrenceKey;
+      await apiCancelOccurrence(baseId, occKey, workspaceId);
+    } else {
+      const id = typeof eventOrId === 'object' ? eventOrId.baseEventId || eventOrId.id : eventOrId;
+      await apiDeleteEvent(id, workspaceId);
+    }
     await loadEvents();
   }
 

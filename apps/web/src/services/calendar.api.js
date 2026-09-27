@@ -135,3 +135,28 @@ export async function deleteEvent(eventId, workspaceId) {
   });
   return res.data;
 }
+
+export async function editOccurrence(eventId, occurrenceKey, workspaceId, payload) {
+  const headers = workspaceId ? { 'x-workspace-id': workspaceId } : {};
+  const res = await request(
+    `${API_BASE}/events/${eventId}/occurrences/${encodeURIComponent(occurrenceKey)}`,
+    {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify(payload),
+    },
+  );
+  return res.data;
+}
+
+export async function cancelOccurrence(eventId, occurrenceKey, workspaceId) {
+  const headers = workspaceId ? { 'x-workspace-id': workspaceId } : {};
+  const res = await request(
+    `${API_BASE}/events/${eventId}/occurrences/${encodeURIComponent(occurrenceKey)}`,
+    {
+      method: 'DELETE',
+      headers,
+    },
+  );
+  return res.data;
+}

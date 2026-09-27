@@ -1,8 +1,16 @@
 import { withTransaction, pool } from '../../core/db.js';
 import { NotFoundError, ValidationError } from '../../core/errors.js';
-import { normalizeAllDayBounds, extractAllDayDates, formatISODate } from '@workaholic/shared';
+import {
+  normalizeAllDayBounds,
+  extractAllDayDates,
+  formatISODate,
+  RECURRENCE_EDIT_MODE,
+  RECURRENCE_EXCEPTION_TYPE,
+} from '@workaholic/shared';
 import * as calendarsRepo from './calendars.repository.js';
 import * as eventsRepo from './events.repository.js';
+import * as recurrenceRepo from '../recurrence/recurrence.repository.js';
+import * as recurrenceService from '../recurrence/recurrence.service.js';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -307,7 +315,22 @@ export const calendarService = {
       );
     }
 
+    let resolvedRecurrenceRuleId = recurrenceRuleId || null;
+
     const createdEvent = await withTransaction(async client => {
+      if (payload.recurrence) {
+        const rule = await recurrenceRepo.createRecurrenceRule(
+          {
+            ...payload.recurrence,
+            workspaceId,
+            startAt: resolvedStartAt,
+            timezone: payload.recurrence.timezone || timezone,
+          },
+          client,
+        );
+        resolvedRecurrenceRuleId = rule.id;
+      }
+
       const event = await eventsRepo.createEvent(
         {
           calendarId,
@@ -324,7 +347,7 @@ export const calendarService = {
           status,
           sourceType,
           sourceReference,
-          recurrenceRuleId,
+          recurrenceRuleId: resolvedRecurrenceRuleId,
           createdBy: user?.id || null,
         },
         client,
@@ -403,6 +426,27 @@ export const calendarService = {
     }
 
     const updatedEvent = await withTransaction(async client => {
+      if (patch.recurrence) {
+        if (existing.recurrenceRuleId) {
+          await recurrenceRepo.updateRecurrenceRule(
+            existing.recurrenceRuleId,
+            patch.recurrence,
+            client,
+          );
+        } else {
+          const rule = await recurrenceRepo.createRecurrenceRule(
+            {
+              ...patch.recurrence,
+              workspaceId,
+              startAt: patchData.startAt || existing.startAt,
+              timezone: patchData.timezone || existing.timezone,
+            },
+            client,
+          );
+          patchData.recurrenceRuleId = rule.id;
+        }
+      }
+
       await eventsRepo.updateEvent(eventId, workspaceId, patchData, client);
 
       if (patch.taskIds !== undefined) {
@@ -430,5 +474,158 @@ export const calendarService = {
       throw new NotFoundError(`Event ${eventId} not found`);
     }
     return eventsRepo.softDeleteEvent(eventId, workspaceId);
+  },
+
+  /**
+   * Edit occurrence with editMode scoping (THIS, THIS_AND_FOLLOWING, SERIES)
+   */
+  async editOccurrence(workspaceId, user, eventId, occurrenceKey, payload) {
+    const existing = await eventsRepo.findEventById(eventId, workspaceId);
+    if (!existing) {
+      throw new NotFoundError(`Event ${eventId} not found`);
+    }
+    if (!existing.recurrenceRuleId) {
+      throw new ValidationError(`Event ${eventId} is not part of a recurring series`);
+    }
+
+    const editMode = payload.editMode || RECURRENCE_EDIT_MODE.THIS;
+
+    if (editMode === RECURRENCE_EDIT_MODE.THIS) {
+      let resolvedExceptionType = RECURRENCE_EXCEPTION_TYPE.MODIFIED;
+      if (payload.status === 'CANCELLED') {
+        resolvedExceptionType = RECURRENCE_EXCEPTION_TYPE.CANCELLED;
+      } else if (payload.startAt || payload.endAt || payload.startDate || payload.endDate) {
+        resolvedExceptionType = RECURRENCE_EXCEPTION_TYPE.RESCHEDULED;
+      }
+
+      let overrideStartAt = payload.startAt || null;
+      let overrideEndAt = payload.endAt || null;
+      let overrideIsAllDay = payload.isAllDay;
+
+      if (payload.isAllDay || payload.startDate) {
+        const start =
+          payload.startDate || (payload.startAt ? formatISODate(payload.startAt) : occurrenceKey);
+        const end = payload.endDate || (payload.endAt ? formatISODate(payload.endAt) : start);
+        const bounds = normalizeAllDayBounds(start, end);
+        overrideStartAt = bounds.startAt;
+        overrideEndAt = bounds.endAt;
+        overrideIsAllDay = true;
+      }
+
+      const exception = await recurrenceRepo.upsertRecurrenceException({
+        workspaceId,
+        recurrenceRuleId: existing.recurrenceRuleId,
+        occurrenceKey,
+        originalStartAt: occurrenceKey.includes('T')
+          ? occurrenceKey
+          : `${occurrenceKey}T00:00:00.000Z`,
+        exceptionType: resolvedExceptionType,
+        overrideTitle: payload.title !== undefined ? payload.title : null,
+        overrideDescription: payload.description !== undefined ? payload.description : null,
+        overrideStartAt,
+        overrideEndAt,
+        overrideIsAllDay,
+        overrideLocation: payload.location !== undefined ? payload.location : null,
+        overrideStatus: payload.status !== undefined ? payload.status : null,
+      });
+
+      return {
+        success: true,
+        message: 'Occurrence updated',
+        editMode,
+        occurrenceKey,
+        exception,
+      };
+    }
+
+    if (editMode === RECURRENCE_EDIT_MODE.THIS_AND_FOLLOWING) {
+      return withTransaction(async client => {
+        const { oldRule, newRule } = await recurrenceService.splitSeries(
+          workspaceId,
+          existing.recurrenceRuleId,
+          occurrenceKey,
+          payload.recurrence || {},
+          client,
+        );
+
+        // Create new master event record for the split series
+        const newEventStartAt =
+          payload.startAt ||
+          (occurrenceKey.includes('T') ? occurrenceKey : `${occurrenceKey}T00:00:00.000Z`);
+
+        const origDurationMs =
+          existing.startAt && existing.endAt
+            ? new Date(existing.endAt).getTime() - new Date(existing.startAt).getTime()
+            : 3600000;
+        const newEventEndAt =
+          payload.endAt ||
+          new Date(new Date(newEventStartAt).getTime() + origDurationMs).toISOString();
+
+        const createdNewEvent = await eventsRepo.createEvent(
+          {
+            calendarId: payload.calendarId || existing.calendarId,
+            workspaceId,
+            title: payload.title !== undefined ? payload.title : existing.title,
+            description:
+              payload.description !== undefined ? payload.description : existing.description,
+            startAt: newEventStartAt,
+            endAt: newEventEndAt,
+            timezone: payload.timezone || existing.timezone,
+            isAllDay: payload.isAllDay !== undefined ? payload.isAllDay : existing.isAllDay,
+            location: payload.location !== undefined ? payload.location : existing.location,
+            meetingUrl: payload.meetingUrl !== undefined ? payload.meetingUrl : existing.meetingUrl,
+            visibility: payload.visibility || existing.visibility,
+            status: payload.status || existing.status,
+            sourceType: existing.sourceType,
+            sourceReference: existing.sourceReference,
+            recurrenceRuleId: newRule.id,
+            createdBy: user?.id || null,
+          },
+          client,
+        );
+
+        return {
+          success: true,
+          message: 'Recurrence series split successfully',
+          editMode,
+          oldSeries: {
+            eventId: existing.id,
+            recurrenceRuleId: oldRule.id,
+            endAt: oldRule.endAt,
+          },
+          newSeries: {
+            eventId: createdNewEvent.id,
+            recurrenceRuleId: newRule.id,
+            startAt: newRule.startAt,
+          },
+          event: createdNewEvent,
+        };
+      });
+    }
+
+    if (editMode === RECURRENCE_EDIT_MODE.SERIES) {
+      const updated = await this.updateEvent(eventId, workspaceId, user, {
+        ...payload,
+        recurrence: payload.recurrence,
+      });
+      return {
+        success: true,
+        message: 'Series updated',
+        editMode,
+        event: updated,
+      };
+    }
+
+    throw new ValidationError(`Unsupported editMode: ${editMode}`);
+  },
+
+  /**
+   * Cancel single occurrence (shortcut for editOccurrence with status: CANCELLED)
+   */
+  async cancelOccurrence(workspaceId, user, eventId, occurrenceKey) {
+    return this.editOccurrence(workspaceId, user, eventId, occurrenceKey, {
+      editMode: RECURRENCE_EDIT_MODE.THIS,
+      status: 'CANCELLED',
+    });
   },
 };

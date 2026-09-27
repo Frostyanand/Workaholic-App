@@ -2,10 +2,10 @@
 
 ## Status Overview
 
-- **Current Phase**: Phase 9 — Today / Command Center (COMPLETED & VERIFIED)
-- **Current Task**: Phase 9 Complete — Ready for Phase 10: Recurrence
-- **Overall Project Status**: Phase 0, Phase 1, Phase 2, Phase 3, Phase 4, Phase 5, Phase 6, Phase 7, Phase 8 & Phase 9 Complete
-- **Last Updated**: 2026-09-07
+- **Current Phase**: Phase 10.13 — Recurring Task Occurrence-State Remediation (COMPLETED & VERIFIED)
+- **Current Task**: Phase 10.13 Complete — Awaiting Authorization for Phase 11
+- **Overall Project Status**: Phase 0 through Phase 10.13 Complete & Verified
+- **Last Updated**: 2026-09-27
 - **Architecture Invariant**: JavaScript/JSX ONLY (zero TypeScript, zero ORMs, PostgreSQL authoritative, React 18.2.0 baseline)
 
 ---
@@ -1101,5 +1101,190 @@ Phase 9 implements the unified Today Command Center daily cockpit according to `
 - **Authoritative Specifications Satisfied**: `2.requirements.md` (REQ-TODAY-001..008), `13.UX-SPECIFICATION.md` (Sections 6 & 7), `4.buisness-rules.md` (BR-TASK-007, BR-SCHED-001..005), `9.CALENDAR-SPECIFICATION.md` (Section 18), `15.API-SPECIFICATION.md` (Section 41.1), `17.TEST-MATRIX.md` (TM-TODAY-001..006).
 - **Strict Invariants Preserved**: Zero TypeScript, zero ORMs, pure `pg` parameterized queries, PostgreSQL 16 authoritative, zero fake productivity metrics or AI/NLP scheduling.
 - **Scope Containment**: Recurrence (Phase 10), Reminders (Phase 11), Google Calendar Sync (Phase 13), and Academic Day Order (Phase 18) strictly deferred.
-- **Next Authorized Phase**: Phase 10: Recurrence (Awaiting explicit user authorization).
+- **Next Authorized Phase**: Phase 10: Recurrence (Completed).
 
+---
+
+## Phase 10: Recurrence — COMPLETED & VERIFIED
+
+### Overview & Objectives
+
+Phase 10 implements the unified, range-bounded Recurrence Engine and occurrence management for recurring calendar events and recurring tasks in Workaholic according to `docs/1.DOMAIN-MODEL.md` (Section 13), `docs/9.CALENDAR-SPECIFICATION.md` (Section 7), `docs/7.DATABASE-DESIGN.md` (Section 10), `docs/4.buisness-rules.md` (BR-SCHED-004), `docs/15.API-SPECIFICATION.md` (Sections 14 & 18), and `docs/17.TEST-MATRIX.md` (TM-REC-001..013). This phase provides pure JavaScript RFC 5545 recurrence rule expansion, dynamic projection without infinite database row pre-generation, full exception overlay (`CANCELLED`, `MODIFIED`, `RESCHEDULED`, `COMPLETED`), edit scopes (`THIS`, `THIS_AND_FOLLOWING`, `SERIES`), wall-clock timezone / DST shift safety, and recurring task occurrence completion semantics.
+
+### Reconciled Phase 10 Semantics
+
+1. **Range-Bounded Dynamic Expansion**: Neither infinite rows nor arbitrary batches are pre-generated in the database. Occurrences are dynamically generated from `recurrence_rules` for the query's `[rangeStart, rangeEnd]` window and combined with non-recurring records and exception overlays.
+2. **Occurrence Identity & Exception Tracking**:
+   - For all-day events: `occurrenceKey` is the unshifted master local date `YYYY-MM-DD`.
+   - For timed events: `occurrenceKey` is the unshifted original UTC timestamp (e.g. `2026-09-08T09:00:00.000Z`).
+   - Exceptions are stored in `recurrence_exceptions` keyed by `(recurrence_rule_id, occurrence_key)`.
+3. **Edit Scopes**:
+   - `THIS`: Modifies or cancels a single occurrence by recording an exception row without splitting or altering the parent series.
+   - `THIS_AND_FOLLOWING`: Executes an atomic series split using `withTransaction` in PostgreSQL. Binds the existing series `end_at` to the previous occurrence, creates a new independent recurrence rule from the split point forward, updates the master event or task, and preserves past history intact.
+   - `SERIES`: Modifies the recurrence rule or master event / task properties directly for all future and past unexceptional occurrences.
+4. **Timezone & DST Wall-Clock Safety**: Recurrence expansion calculates local calendar time components (`year`, `month`, `date`, `hours`, `minutes`) and projects them back into UTC for the target date, ensuring meetings scheduled at 09:00 local time stay at 09:00 local time across DST spring-forward, DST fall-back, and non-DST timezones (Asia/Kolkata, America/New_York, Europe/London).
+5. **Task Recurrence Semantics**: Completing a recurring task occurrence records a `COMPLETED` exception in `recurrence_exceptions` and advances the task's `due_at` to the next uncompleted occurrence while keeping the task `status` as `TODO`. When a bounded series reaches its end condition (count or until date), the task status transitions to `COMPLETED`. Reopening an occurrence rolls back the `due_at` and deletes the exception.
+
+### Completed Tasks
+
+1. **Task 10.1 — Shared Recurrence Constants and Schemas (`packages/shared`)**:
+   - `RECURRENCE_FREQUENCY` (`DAILY`, `WEEKLY`, `MONTHLY`, `YEARLY`), `RECURRENCE_EDIT_MODE` (`THIS`, `THIS_AND_FOLLOWING`, `SERIES`), `RECURRENCE_EXCEPTION_TYPE` (`CANCELLED`, `MODIFIED`, `RESCHEDULED`, `COMPLETED`), `WEEKDAY` (0=SU .. 6=SA).
+   - `recurrenceRuleSchema`, `editOccurrenceSchema`, and updated `createTaskSchema`, `updateTaskSchema`, `createEventSchema`, `updateEventSchema`.
+   - Verified with 34/34 tests passing in `packages/shared/tests/schemas.test.js`.
+
+2. **Task 10.2 — Database Migration (`apps/backend/migrations`)**:
+   - Created and applied `1725628807000_create_recurrence_tables.sql`.
+   - Created `recurrence_rules` table with frequency, interval, by_weekday, by_month_day, by_set_pos, start_at, end_at, occurrence_count, timezone, rrule_string.
+   - Created `recurrence_exceptions` table with `UNIQUE(recurrence_rule_id, occurrence_key)` and composite foreign key cascade.
+   - Added foreign key columns `recurrence_rule_id` to `events` and `tasks` tables with index support.
+
+3. **Task 10.3 — Pure JS Recurrence Engine (`apps/backend/src/modules/recurrence`)**:
+   - Implemented `recurrence.engine.js`: `expandOccurrences`, `formatRRuleString`, `localToUtc`, `getLocalComponents`, `isOccurrenceOfSeries`.
+   - Implemented `apps/backend/tests/recurrence.engine.test.js` covering TM-REC-001 through TM-REC-012, plus Edge Cases A–E (Asia/Kolkata, America/New_York DST transitions, London DST transitions, all-day events, leap years). 24/24 tests passing.
+
+4. **Task 10.4 — Recurrence Repositories & Service (`apps/backend/src/modules/recurrence`)**:
+   - `recurrence.repository.js`: Parameterized SQL queries for rule CRUD and exception management.
+   - `recurrence.service.js`: Rule lifecycle, exception overlay mapping, and atomic `splitSeries` transactions.
+
+5. **Task 10.5 & 10.6 — Calendar Recurrence Integration & APIs (`apps/backend/src/modules/calendar`)**:
+   - Updated `events.repository.js` to dynamically expand occurrences within range queries and overlay exceptions.
+   - Updated `calendar.service.js` with `editOccurrence` (`THIS`, `THIS_AND_FOLLOWING`, `SERIES`) and `cancelOccurrence`.
+   - Added routes `PATCH /events/:id/occurrences/:occurrenceKey` and `DELETE /events/:id/occurrences/:occurrenceKey`.
+   - Live integration tests: `apps/backend/tests/calendar-recurrence-live.test.js` (5/5 passing against live PostgreSQL 16).
+
+6. **Task 10.7 & 10.8 — Task Recurrence Integration, Completion & Reopening (`apps/backend/src/modules/tasks`)**:
+   - Updated `tasks.repository.js` to map `recurrence_rule_id`.
+   - Updated `tasks.service.js` with `completeOccurrence` and `reopenOccurrence`.
+   - Added routes `POST /tasks/:id/occurrences/:occurrenceKey/complete` and `POST /tasks/:id/occurrences/:occurrenceKey/reopen`.
+   - Live integration tests: `apps/backend/tests/tasks-recurrence-live.test.js` (5/5 passing against live PostgreSQL 16).
+
+7. **Task 10.9 & 10.10 — Web Client Recurrence UI & Today Integration (`apps/web`)**:
+   - `calendar.api.js` & `tasks.api.js`: Client API methods for occurrence edit, cancel, complete, and reopen.
+   - `CreateEventModal.jsx`: Recurrence configuration selector (Daily, Weekdays, Weekly, Monthly, Yearly, Custom with interval/weekday buttons, Ends: Never, On date, After count) and Edit Scope selector (`THIS`, `THIS_AND_FOLLOWING`, `SERIES`).
+   - `EventDetailModal.jsx`: "🔄 Recurring" badge and occurrence deletion options ("Delete Occurrence" vs "Delete Series").
+   - `CalendarPage.jsx`: Integrated occurrence editing and cancellation handlers.
+   - `CreateTaskModal.jsx` & `TaskItem.jsx`: Recurring task creation and "🔄 Recurring" badge display.
+   - `TasksPage.jsx`: Recurring task completion advancement to next recurrence.
+
+8. **Task 10.11 — Playwright End-to-End Suite (`e2e/recurrence.spec.js`)**:
+   - 3 E2E test journeys covering creating recurring events, inspecting badges, editing single occurrences, cancelling single occurrences vs series, and creating recurring tasks.
+   - Full Playwright E2E suite: 39/39 tests passing across all 6 test specs (Calendar, Core UX, Projects/Boards, Recurrence, Tasks, Today).
+
+---
+
+## Phase 10 Final Verification Matrix
+
+| Verification Check          | Scope / Command                    | Result     | Details                                            |
+| --------------------------- | ---------------------------------- | ---------- | -------------------------------------------------- |
+| **JavaScript-Only Guard**   | `npm run check:js-only`            | **PASSED** | 0 TypeScript files across whole repository         |
+| **Linter Verification**     | `npm run lint`                     | **PASSED** | 0 errors, 0 warnings across all workspaces         |
+| **Formatting Check**        | `npm run format:check`             | **PASSED** | 100% Prettier compliant                            |
+| **Shared Unit Tests**       | `packages/shared/tests/*.test.js`  | **PASSED** | 34/34 tests passed (schemas + datetime)            |
+| **Backend Test Suite**      | `apps/backend/tests/*.test.js`     | **PASSED** | 336/336 tests passed across 28 test files          |
+| **Web Test Suite**          | `apps/web/tests/*.test.jsx`        | **PASSED** | 68/68 tests passed across 7 test files             |
+| **Desktop Tests**           | `apps/desktop/tests/*.test.js`     | **PASSED** | 3/3 tests passed (security + IPC whitelist)        |
+| **Mobile Tests**            | `apps/mobile/tests/*.test.js`      | **PASSED** | 6/6 tests passed (tabs + env + API client)         |
+| **Monorepo Unit/Int Tests** | `npm test`                         | **PASSED** | **442/442 tests passed** across 39 test files      |
+| **Playwright E2E Tests**    | `npx playwright test`              | **PASSED** | **39/39 tests passed** across all 6 E2E test specs |
+| **Web Production Build**    | `npm run build -w @workaholic/web` | **PASSED** | Production bundle generated cleanly in 9.01s       |
+
+---
+
+## Phase 10 Summary
+
+- **Phase 10 Classification**: **VERIFIED COMPLETE**
+- **Authoritative Specifications Satisfied**: `1.DOMAIN-MODEL.md` (Section 13), `9.CALENDAR-SPECIFICATION.md` (Section 7), `7.DATABASE-DESIGN.md` (Section 10), `4.buisness-rules.md` (BR-SCHED-004), `15.API-SPECIFICATION.md` (Sections 14 & 18), `17.TEST-MATRIX.md` (TM-REC-001..013).
+- **Strict Invariants Preserved**: Zero TypeScript, zero ORMs, pure `pg` parameterized queries with explicit ACID transactions, PostgreSQL 16 authoritative, zero premature background worker or Redis queues.
+- **Scope Containment**: Phase 11 (Notifications & Reminders), Phase 12 (Background Job Infrastructure), Phase 13 (Google Calendar Sync), and Phase 18 (Academic Day Order) strictly deferred.
+- **Next Authorized Phase**: Phase 10.13 (Occurrence-State Remediation).
+
+---
+
+## Phase 10.13: Recurring Task Occurrence-State Remediation — COMPLETED & VERIFIED
+
+### Overview & Objectives
+
+Following an independent architectural audit of Phase 10 Recurrence, Phase 10.13 remediates three critical defects in recurring-task occurrence completion while strictly preserving the verified Calendar recurrence engine:
+
+1. **Historical Due Date Preservation (BR-TASK-008)**: Replaces the mutating `tasks.due_at` cursor with a dedicated, sparse persistence model via the `task_occurrences` table. `tasks.due_at` remains the immutable series anchor.
+2. **Elimination of Out-of-Order Orphaning**: Forward-only search eliminated. Out-of-order completions record individual occurrence state without affecting uncompleted earlier occurrences.
+3. **Strict Bounded Recurrence Accounting**: Corrects premature series completion for `COUNT=N` (requiring $\text{COMPLETED} + \text{CANCELLED} = N$) and `UNTIL` boundaries.
+
+### Remediated Architecture
+
+1. **Database Schema (`task_occurrences`)**:
+   - Migration `1725628808000_create_task_occurrences.sql`.
+   - Sparse table: absence of row = default implicit `TODO`.
+   - Explicit rows: `status IN ('TODO', 'COMPLETED', 'CANCELLED')`.
+   - Timed vs All-Day: `original_due_at`/`override_due_at` (`TIMESTAMPTZ`) vs `original_due_date`/`override_due_date` (`DATE`). Zero arbitrary UTC midnight distortion.
+   - Canonical `occurrence_key` is immutable and preserved across rescheduling.
+2. **Repository Layer (`task_occurrences.repository.js`)**:
+   - `upsertTaskOccurrence`, `findTaskOccurrence`, `deleteTaskOccurrence`, `findOccurrencesByTaskId`, `findOccurrencesByTaskIds`, `findCompletedOccurrencesByRange`, and `countAccountedOccurrencesForTask`.
+3. **Tasks Service & Routes Integration (`tasks.service.js`, `tasks.routes.js`)**:
+   - `completeOccurrence`: sparse `task_occurrences` upsert, preserves `tasks.due_at`, preserves reschedule overrides, checks bounded series completion.
+   - `reopenOccurrence`: restores occurrence to `TODO` (deletes non-rescheduled row; preserves reschedule override), reverts master task to `TODO` if series was complete.
+   - `cancelOccurrence`: marks occurrence `CANCELLED` in `task_occurrences` and checks boundary accounting.
+   - `rescheduleOccurrence`: records `override_due_at`/`override_due_date` while preserving canonical `occurrence_key`.
+   - `getTaskOccurrences`: expands nominal occurrences and merges sparse overrides with proper date range windowing.
+   - `tasks.routes.js`: Added endpoints `/:id/occurrences/:occurrenceKey/(complete|reopen|cancel|reschedule)` and `GET /:id/occurrences`. Supported both `start`/`end` and `startAt`/`endAt` query parameters in `getOccurrencesQuerySchema` to ensure arbitrary ISO date-range queries are accurately bound without falling back to relative windows.
+4. **Today Command Center Integration (`today.service.js`)**:
+   - Projects uncompleted recurring occurrences to `dueToday` or `overdue` using effective due date (`overrideDueAt || nominalDueAt`).
+   - Retrieves `completedToday` from `task_occurrences.findCompletedOccurrencesByRange`.
+   - Master task `completed_at` and `due_at` are never mutated for individual occurrence completion.
+5. **Web Client Integration (`apps/web`)**:
+   - `tasks.api.js`: Added `cancelTaskOccurrence`, `rescheduleTaskOccurrence`, `fetchTaskOccurrences`.
+   - `TodayPage.jsx`: Dynamic occurrence completion and reopening via dedicated endpoints.
+
+### Final Regression & Live Database Audit Results
+
+1. **Full Verification Suite**:
+   - `npm run check:js-only`: **PASSED** (0 TypeScript files).
+   - `npm run lint`: **PASSED** (ESLint 9 Flat Config: 0 errors, 0 warnings).
+   - `npm run format:check`: **PASSED** (Prettier code style verified across all files).
+   - `npm test`: **PASSED** (458/458 tests across 40 test files; delta: +16 unit tests in `apps/backend/tests/tasks-recurrence.test.js` over the 442 Phase 10 baseline).
+   - `npx playwright test`: **PASSED** (39/39 E2E tests across 6 journey test files: `calendar.spec.js`, `core-ux.spec.js`, `projects-boards.spec.js`, `recurrence.spec.js`, `tasks.spec.js`, `today.spec.js`).
+   - `npm run build`: **PASSED** (Vite production bundle built cleanly in 4.36s).
+
+2. **Live PostgreSQL 16 Catalog Audit**:
+   - Verified against live container (`workaholic_dev` on PostgreSQL 16.13):
+     - Table `public.task_occurrences` exists.
+     - All 13 columns verified: `id` (UUID PK), `workspace_id` (UUID FK), `task_id` (UUID FK), `occurrence_key` (VARCHAR(100)), `is_all_day` (BOOLEAN), `original_due_at` (TIMESTAMPTZ), `original_due_date` (DATE), `override_due_at` (TIMESTAMPTZ), `override_due_date` (DATE), `status` (VARCHAR(50)), `completed_at` (TIMESTAMPTZ), `created_at` (TIMESTAMPTZ), `updated_at` (TIMESTAMPTZ).
+     - CHECK constraints: `chk_task_occurrence_status` ('TODO', 'COMPLETED', 'CANCELLED'), `chk_task_occ_due_type` (strict separation of timed vs all-day date semantics).
+     - UNIQUE constraint: `uq_task_occurrence` on `(task_id, occurrence_key)`.
+     - Foreign keys: `task_occurrences_workspace_id_fkey` -> `workspaces(id)` ON DELETE CASCADE, `task_occurrences_task_id_fkey` -> `tasks(id)` ON DELETE CASCADE.
+     - All 5 indexes verified: PK, unique, `idx_task_occurrences_task_id`, `idx_task_occurrences_workspace_status`, `idx_task_occurrences_completed_at`.
+     - Migration registration: `1725628808000_create_task_occurrences.sql` cleanly recorded in `pgmigrations`.
+
+3. **Migration Verification**:
+   - Forward migration (`node scripts/migrate.js up`): Cleanly applied.
+   - Rollback migration (`node scripts/migrate.js down 1`): Cleanly reverted table and dropped indexes/constraints.
+   - Re-application (`node scripts/migrate.js up`): Safe, idempotent, zero data corruption.
+
+4. **Original Blocker Verification (Live DB)**:
+   - **Blocker A (BR-TASK-008)**: Completed occurrence 1; master `tasks.due_at` remained unchanged (`2026-06-01T09:00:00.000Z`).
+   - **Blocker B (Out-of-Order Orphaning)**: Completed occurrence 3 before 1; range expansion proved occurrences 1 and 2 remain `TODO` and fully actionable.
+   - **Blocker C (COUNT=3 Boundary Accounting)**: Completed occurrence 3; master remained `TODO`. After completing occurrence 1, cancelling occurrence 2, and completing occurrence 3 (total accounted = 3), master transitioned to `COMPLETED`.
+
+5. **Regressions Across Phases 5–9**:
+   - Zero regressions across normal task CRUD, task completion, reopening, deletion/restore, task hierarchy, dependencies, labels, links, work blocks, projects, boards, column movement, Calendar, Today, Phase 7 core UX, recurrence events, recurrence exceptions, THIS, THIS_AND_FOLLOWING, SERIES, and timezone/DST handling.
+
+| Check / Requirement           | Status   | Details                                                                                         |
+| ----------------------------- | -------- | ----------------------------------------------------------------------------------------------- |
+| **BR-TASK-008 Preservation**  | **PASS** | Completing occurrence preserves master `tasks.due_at` unchanged                                 |
+| **Out-of-Order Completion**   | **PASS** | Completing occurrence 3 before 1 does not orphan 1 or 2                                         |
+| **COUNT Boundary**            | **PASS** | Completing occurrence 3 of 3 does not complete series; completes when COMPLETED + CANCELLED = N |
+| **UNTIL Boundary**            | **PASS** | Completes only when all bounded occurrences through `end_at` are accounted for                  |
+| **All-Day Semantics**         | **PASS** | Uses `DATE` (`YYYY-MM-DD`) without UTC midnight distortion                                      |
+| **Reschedule Semantics**      | **PASS** | Preserves canonical `occurrence_key`; reopening preserves override                              |
+| **Today Integration**         | **PASS** | `dueToday`, `overdue`, `completedToday` accurately projected from effective dates               |
+| **Tenant Isolation / IDOR**   | **PASS** | Cross-workspace occurrence operations return 404 / NotFoundError                                |
+| **Idempotency & Concurrency** | **PASS** | Repeated and concurrent completions resolve deterministically with zero duplicates              |
+| **Live Database Catalog**     | **PASS** | Verified table, columns, types, check constraints, FK cascades, and indexes                     |
+| **Migration Reversibility**   | **PASS** | `up`, `down 1`, and re-`up` tested and recorded cleanly in `pgmigrations`                       |
+| **Full Vitest Suite**         | **PASS** | 458/458 passed across 40 test files (+16 tests from Phase 10.13)                                |
+| **Full Playwright Suite**     | **PASS** | 39/39 passed across 6 journey test files                                                        |
+| **Lint & Format & JS-only**   | **PASS** | ESLint: 0 errors/0 warnings; Prettier: passed; JS-only: 0 TS files                              |
+| **Production Build**          | **PASS** | Vite production bundle built cleanly in 4.36s                                                   |
+
+- **Phase 10.13 Status**: **VERIFIED COMPLETE**
+- **Next Phase**: Phase 11: Notifications & Reminders (Awaiting explicit user authorization).

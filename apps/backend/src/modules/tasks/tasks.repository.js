@@ -1,4 +1,5 @@
 import { query, pool } from '../../core/db.js';
+import { mapRecurrenceRuleRow } from '../recurrence/recurrence.repository.js';
 
 /**
  * Maps raw SQL row to clean task domain object
@@ -20,6 +21,7 @@ export function mapTaskRow(row) {
     dueAt: row.due_at,
     estimatedDuration: row.estimated_duration,
     completedAt: row.completed_at,
+    recurrenceRuleId: row.recurrence_rule_id,
     createdBy: row.created_by,
     assignedTo: row.assigned_to,
     version: row.version,
@@ -29,6 +31,9 @@ export function mapTaskRow(row) {
     ...(row.creator_display_name ? { creatorDisplayName: row.creator_display_name } : {}),
     ...(row.assignee_display_name ? { assigneeDisplayName: row.assignee_display_name } : {}),
     ...(row.subtask_count !== undefined ? { subtaskCount: parseInt(row.subtask_count, 10) } : {}),
+    ...(row.recurrence_rule_raw
+      ? { recurrenceRule: mapRecurrenceRuleRow(row.recurrence_rule_raw) }
+      : {}),
   };
 }
 
@@ -56,6 +61,7 @@ export async function createTask(taskData, client = pool) {
     estimatedDuration = null,
     createdBy,
     assignedTo = null,
+    recurrenceRuleId = null,
   } = taskData;
 
   if (!workspaceId || !title || !createdBy) {
@@ -66,9 +72,9 @@ export async function createTask(taskData, client = pool) {
     INSERT INTO tasks (
       workspace_id, project_id, board_id, board_column_id, parent_task_id,
       title, description, status, priority, start_at, due_at,
-      estimated_duration, created_by, assigned_to
+      estimated_duration, created_by, assigned_to, recurrence_rule_id
     )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
     RETURNING *
   `;
   const params = [
@@ -86,6 +92,7 @@ export async function createTask(taskData, client = pool) {
     estimatedDuration,
     createdBy,
     assignedTo,
+    recurrenceRuleId,
   ];
 
   const result = await query(sql, params, client);
@@ -112,10 +119,12 @@ export async function findTaskById(
   let sql = `
     SELECT
       t.*,
+      to_jsonb(rr.*) AS recurrence_rule_raw,
       u_creator.display_name AS creator_display_name,
       u_assignee.display_name AS assignee_display_name,
       (SELECT COUNT(*) FROM tasks sub WHERE sub.parent_task_id = t.id AND sub.deleted_at IS NULL) AS subtask_count
     FROM tasks t
+    LEFT JOIN recurrence_rules rr ON t.recurrence_rule_id = rr.id
     LEFT JOIN users u_creator ON u_creator.id = t.created_by
     LEFT JOIN users u_assignee ON u_assignee.id = t.assigned_to
     WHERE t.id = $1 AND t.workspace_id = $2
@@ -304,6 +313,7 @@ export async function updateTask(
     projectId: 'project_id',
     boardId: 'board_id',
     boardColumnId: 'board_column_id',
+    recurrenceRuleId: 'recurrence_rule_id',
   };
 
   for (const [key, col] of Object.entries(allowedFields)) {

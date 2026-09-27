@@ -16,6 +16,7 @@ export function CreateTaskModal({
   const [dueAt, setDueAt] = useState('');
   const [estimatedDuration, setEstimatedDuration] = useState('');
   const [description, setDescription] = useState('');
+  const [recurrenceFreq, setRecurrenceFreq] = useState('NONE');
   const [error, setError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -28,6 +29,7 @@ export function CreateTaskModal({
       setDueAt('');
       setEstimatedDuration('');
       setDescription('');
+      setRecurrenceFreq('NONE');
       setError(null);
       setSubmitting(false);
     }
@@ -54,6 +56,15 @@ export function CreateTaskModal({
         boardId: initialBoardId || undefined,
         boardColumnId: initialBoardColumnId || undefined,
       };
+
+      if (recurrenceFreq !== 'NONE') {
+        payload.recurrence = {
+          frequency: recurrenceFreq === 'WEEKDAYS' ? 'WEEKLY' : recurrenceFreq,
+          interval: 1,
+          ...(recurrenceFreq === 'WEEKDAYS' ? { byWeekday: [1, 2, 3, 4, 5] } : {}),
+        };
+      }
+
       await onCreateTask(payload);
       onClose();
     } catch (err) {
@@ -226,6 +237,45 @@ export function CreateTaskModal({
               boxSizing: 'border-box',
             }}
           />
+        </div>
+
+        {/* Recurrence */}
+        <div style={{ marginBottom: '16px' }}>
+          <label
+            htmlFor="task-recurrence-select"
+            style={{
+              display: 'block',
+              fontSize: '0.85rem',
+              fontWeight: 500,
+              color: 'var(--text-secondary)',
+              marginBottom: '6px',
+            }}
+          >
+            Repeat
+          </label>
+          <select
+            id="task-recurrence-select"
+            value={recurrenceFreq}
+            onChange={e => setRecurrenceFreq(e.target.value)}
+            disabled={submitting}
+            style={{
+              width: '100%',
+              padding: '9px 12px',
+              backgroundColor: 'var(--bg-surface)',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: 'var(--radius-sm)',
+              color: 'var(--text-primary)',
+              fontSize: '0.9rem',
+              boxSizing: 'border-box',
+            }}
+          >
+            <option value="NONE">Does not repeat</option>
+            <option value="DAILY">Daily</option>
+            <option value="WEEKDAYS">Every weekday (Mon-Fri)</option>
+            <option value="WEEKLY">Weekly</option>
+            <option value="MONTHLY">Monthly</option>
+            <option value="YEARLY">Yearly</option>
+          </select>
         </div>
 
         {/* Description */}

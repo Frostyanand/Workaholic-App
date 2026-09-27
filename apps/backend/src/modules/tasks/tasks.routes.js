@@ -45,6 +45,31 @@ const taskWorkBlockParamsSchema = z.object({
   blockId: idSchema,
 });
 
+const taskOccurrenceParamsSchema = z.object({
+  id: idSchema,
+  occurrenceKey: z.string().min(1),
+});
+
+const rescheduleOccurrenceSchema = z.object({
+  overrideDueAt: z.string().datetime().optional(),
+  overrideDueDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  newDueAt: z.string().datetime().optional(),
+  newDueDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+});
+
+const getOccurrencesQuerySchema = z.object({
+  start: z.string().optional(),
+  end: z.string().optional(),
+  startAt: z.string().optional(),
+  endAt: z.string().optional(),
+});
+
 /**
  * Tasks module route definitions conforming to API-SPECIFICATION.md Section 31-34.
  */
@@ -228,6 +253,114 @@ export async function tasksRoutes(fastify, _opts) {
     async (request, reply) => {
       const task = await tasksService.restoreTask(request.params.id, request.workspace.id);
       return sendSuccess(reply, task);
+    },
+  );
+
+  // ---------------------------------------------------------
+  // Recurring Task Occurrence Endpoints
+  // ---------------------------------------------------------
+  fastify.post(
+    '/:id/occurrences/:occurrenceKey/complete',
+    {
+      preHandler: authHooks,
+      preValidation: [validateRequest({ params: taskOccurrenceParamsSchema })],
+    },
+    async (request, reply) => {
+      const result = await tasksService.completeOccurrence(
+        request.workspace.id,
+        request.user.id,
+        request.params.id,
+        request.params.occurrenceKey,
+      );
+      return sendSuccess(reply, result);
+    },
+  );
+
+  fastify.post(
+    '/:id/occurrences/:occurrenceKey/reopen',
+    {
+      preHandler: authHooks,
+      preValidation: [validateRequest({ params: taskOccurrenceParamsSchema })],
+    },
+    async (request, reply) => {
+      const result = await tasksService.reopenOccurrence(
+        request.workspace.id,
+        request.user.id,
+        request.params.id,
+        request.params.occurrenceKey,
+      );
+      return sendSuccess(reply, result);
+    },
+  );
+
+  fastify.post(
+    '/:id/occurrences/:occurrenceKey/cancel',
+    {
+      preHandler: authHooks,
+      preValidation: [validateRequest({ params: taskOccurrenceParamsSchema })],
+    },
+    async (request, reply) => {
+      const result = await tasksService.cancelOccurrence(
+        request.workspace.id,
+        request.user.id,
+        request.params.id,
+        request.params.occurrenceKey,
+      );
+      return sendSuccess(reply, result);
+    },
+  );
+
+  fastify.post(
+    '/:id/occurrences/:occurrenceKey/reschedule',
+    {
+      preHandler: authHooks,
+      preValidation: [
+        validateRequest({
+          params: taskOccurrenceParamsSchema,
+          body: rescheduleOccurrenceSchema,
+        }),
+      ],
+    },
+    async (request, reply) => {
+      const result = await tasksService.rescheduleOccurrence(
+        request.workspace.id,
+        request.user.id,
+        request.params.id,
+        request.params.occurrenceKey,
+        request.validated.body,
+      );
+      return sendSuccess(reply, result);
+    },
+  );
+
+  fastify.get(
+    '/:id/occurrences',
+    {
+      preHandler: authHooks,
+      preValidation: [
+        validateRequest({
+          params: taskIdParamsSchema,
+          query: getOccurrencesQuerySchema,
+        }),
+      ],
+    },
+    async (request, reply) => {
+      const now = new Date();
+      const start =
+        request.validated.query?.start ||
+        request.validated.query?.startAt ||
+        new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+      const end =
+        request.validated.query?.end ||
+        request.validated.query?.endAt ||
+        new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000).toISOString();
+      const occurrences = await tasksService.getTaskOccurrences(
+        request.workspace.id,
+        request.params.id,
+        start,
+        end,
+      );
+      return sendSuccess(reply, occurrences);
     },
   );
 

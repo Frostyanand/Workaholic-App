@@ -169,3 +169,65 @@ export async function deleteWorkBlock(taskId, workspaceId, blockId) {
   });
   return res.data;
 }
+
+export async function completeTaskOccurrence(taskId, occurrenceKey, workspaceId) {
+  const headers = workspaceId ? { 'x-workspace-id': workspaceId } : {};
+  const res = await request(
+    `${API_BASE}/tasks/${taskId}/occurrences/${encodeURIComponent(occurrenceKey)}/complete`,
+    {
+      method: 'POST',
+      headers,
+    },
+  );
+  return res.data;
+}
+
+export async function reopenTaskOccurrence(taskId, occurrenceKey, workspaceId) {
+  const headers = workspaceId ? { 'x-workspace-id': workspaceId } : {};
+  const res = await request(
+    `${API_BASE}/tasks/${taskId}/occurrences/${encodeURIComponent(occurrenceKey)}/reopen`,
+    {
+      method: 'POST',
+      headers,
+    },
+  );
+  return res.data;
+}
+
+export async function cancelTaskOccurrence(taskId, occurrenceKey, workspaceId) {
+  const headers = workspaceId ? { 'x-workspace-id': workspaceId } : {};
+  const res = await request(
+    `${API_BASE}/tasks/${taskId}/occurrences/${encodeURIComponent(occurrenceKey)}/cancel`,
+    {
+      method: 'POST',
+      headers,
+    },
+  );
+  return res.data;
+}
+
+export async function rescheduleTaskOccurrence(taskId, occurrenceKey, payload, workspaceId) {
+  const headers = workspaceId ? { 'x-workspace-id': workspaceId } : {};
+  const res = await request(
+    `${API_BASE}/tasks/${taskId}/occurrences/${encodeURIComponent(occurrenceKey)}/reschedule`,
+    {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+    },
+  );
+  return res.data;
+}
+
+export async function fetchTaskOccurrences(taskId, start, end, workspaceId) {
+  const headers = workspaceId ? { 'x-workspace-id': workspaceId } : {};
+  const queryParams = new URLSearchParams();
+  if (start) queryParams.set('start', start);
+  if (end) queryParams.set('end', end);
+  const queryStr = queryParams.toString() ? `?${queryParams.toString()}` : '';
+  const res = await request(`${API_BASE}/tasks/${taskId}/occurrences${queryStr}`, {
+    method: 'GET',
+    headers,
+  });
+  return res.data;
+}

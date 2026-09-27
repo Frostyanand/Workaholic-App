@@ -42,6 +42,11 @@ import {
   extractAllDayDates,
   deriveAllDayDates,
   todayQuerySchema,
+  RECURRENCE_EDIT_MODE,
+  RECURRENCE_EXCEPTION_TYPE,
+  WEEKDAY,
+  recurrenceRuleSchema,
+  editOccurrenceSchema,
 } from '../src/index.js';
 
 describe('@workaholic/shared constants', () => {
@@ -544,6 +549,145 @@ describe('@workaholic/shared core entity schemas', () => {
       // Invalid timezone length
       const longTz = todayQuerySchema.safeParse({ timezone: 'a'.repeat(101) });
       expect(longTz.success).toBe(false);
+    });
+  });
+
+  describe('Phase 10 Recurrence Schemas & Constants', () => {
+    it('exports authoritative recurrence constants', () => {
+      expect(RECURRENCE_FREQUENCY.DAILY).toBe('DAILY');
+      expect(RECURRENCE_FREQUENCY.WEEKLY).toBe('WEEKLY');
+      expect(RECURRENCE_FREQUENCY.MONTHLY).toBe('MONTHLY');
+      expect(RECURRENCE_FREQUENCY.YEARLY).toBe('YEARLY');
+
+      expect(RECURRENCE_EDIT_MODE.THIS).toBe('THIS');
+      expect(RECURRENCE_EDIT_MODE.THIS_AND_FOLLOWING).toBe('THIS_AND_FOLLOWING');
+      expect(RECURRENCE_EDIT_MODE.SERIES).toBe('SERIES');
+
+      expect(RECURRENCE_EXCEPTION_TYPE.CANCELLED).toBe('CANCELLED');
+      expect(RECURRENCE_EXCEPTION_TYPE.MODIFIED).toBe('MODIFIED');
+      expect(RECURRENCE_EXCEPTION_TYPE.RESCHEDULED).toBe('RESCHEDULED');
+      expect(RECURRENCE_EXCEPTION_TYPE.COMPLETED).toBe('COMPLETED');
+
+      expect(WEEKDAY.MO).toBe(1);
+      expect(WEEKDAY.SU).toBe(0);
+      expect(WEEKDAY.FR).toBe(5);
+    });
+
+    it('validates daily, weekly, monthly, and yearly recurrence rules', () => {
+      // 1. Daily rule
+      const dailyRule = recurrenceRuleSchema.safeParse({
+        frequency: 'DAILY',
+        interval: 2,
+      });
+      expect(dailyRule.success).toBe(true);
+      expect(dailyRule.data.interval).toBe(2);
+      expect(dailyRule.data.timezone).toBe('UTC');
+
+      // 2. Weekly rule with specified weekdays
+      const weeklyRule = recurrenceRuleSchema.safeParse({
+        frequency: 'WEEKLY',
+        interval: 1,
+        byWeekday: [1, 3, 5], // Mon, Wed, Fri
+        timezone: 'Asia/Kolkata',
+      });
+      expect(weeklyRule.success).toBe(true);
+      expect(weeklyRule.data.byWeekday).toEqual([1, 3, 5]);
+
+      // 3. Monthly rule with nth weekday (e.g. 2nd Tuesday)
+      const monthlyNthWeekday = recurrenceRuleSchema.safeParse({
+        frequency: 'MONTHLY',
+        interval: 1,
+        byWeekday: [2], // Tuesday
+        bySetPos: 2, // 2nd
+      });
+      expect(monthlyNthWeekday.success).toBe(true);
+      expect(monthlyNthWeekday.data.bySetPos).toBe(2);
+
+      // 4. Rule with end date UNTIL
+      const untilRule = recurrenceRuleSchema.safeParse({
+        frequency: 'DAILY',
+        endAt: '2026-12-31T23:59:59.000Z',
+      });
+      expect(untilRule.success).toBe(true);
+      expect(untilRule.data.endAt).toBe('2026-12-31T23:59:59.000Z');
+
+      // 5. Rule with occurrence count COUNT
+      const countRule = recurrenceRuleSchema.safeParse({
+        frequency: 'WEEKLY',
+        occurrenceCount: 10,
+      });
+      expect(countRule.success).toBe(true);
+      expect(countRule.data.occurrenceCount).toBe(10);
+    });
+
+    it('rejects invalid or contradictory recurrence rules', () => {
+      // Cannot have both endAt and occurrenceCount
+      const contradictory = recurrenceRuleSchema.safeParse({
+        frequency: 'DAILY',
+        endAt: '2026-12-31T23:59:59.000Z',
+        occurrenceCount: 10,
+      });
+      expect(contradictory.success).toBe(false);
+      expect(contradictory.error.issues[0].message).toContain('Cannot specify both endAt');
+
+      // Invalid frequency
+      const badFreq = recurrenceRuleSchema.safeParse({
+        frequency: 'HOURLY',
+      });
+      expect(badFreq.success).toBe(false);
+
+      // Negative interval
+      const badInterval = recurrenceRuleSchema.safeParse({
+        frequency: 'DAILY',
+        interval: -1,
+      });
+      expect(badInterval.success).toBe(false);
+    });
+
+    it('validates occurrence editing schemas', () => {
+      const editThis = editOccurrenceSchema.safeParse({
+        editMode: 'THIS',
+        title: 'Single Occurrence Meeting with Modified Title',
+      });
+      expect(editThis.success).toBe(true);
+      expect(editThis.data.editMode).toBe('THIS');
+
+      const editFollowing = editOccurrenceSchema.safeParse({
+        editMode: 'THIS_AND_FOLLOWING',
+        title: 'Shifted Project Sync',
+        recurrence: {
+          frequency: 'WEEKLY',
+          interval: 2,
+        },
+      });
+      expect(editFollowing.success).toBe(true);
+      expect(editFollowing.data.editMode).toBe('THIS_AND_FOLLOWING');
+      expect(editFollowing.data.recurrence.interval).toBe(2);
+    });
+
+    it('validates task and event creation schemas with recurrence', () => {
+      const taskWithRecurrence = createTaskSchema.safeParse({
+        title: 'Submit Weekly Progress Report',
+        recurrence: {
+          frequency: 'WEEKLY',
+          byWeekday: [5], // Friday
+        },
+      });
+      expect(taskWithRecurrence.success).toBe(true);
+      expect(taskWithRecurrence.data.recurrence.frequency).toBe('WEEKLY');
+
+      const eventWithRecurrence = createEventSchema.safeParse({
+        calendarId: '123e4567-e89b-12d3-a456-426614174000',
+        title: 'Daily Architecture Standup',
+        startAt: '2026-09-07T09:00:00.000Z',
+        endAt: '2026-09-07T09:30:00.000Z',
+        recurrence: {
+          frequency: 'DAILY',
+          interval: 1,
+        },
+      });
+      expect(eventWithRecurrence.success).toBe(true);
+      expect(eventWithRecurrence.data.recurrence.frequency).toBe('DAILY');
     });
   });
 });

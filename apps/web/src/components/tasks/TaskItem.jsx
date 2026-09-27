@@ -172,6 +172,28 @@ export function TaskItem({ task, onToggleComplete, onSelectTask, onDeleteTask })
                 <span>Overdue</span>
               </span>
             )}
+
+            {/* Recurring Badge */}
+            {(task.recurrenceRuleId || task.recurrence_rule_id || task.recurrenceRule) && (
+              <span
+                className="task-recurrence-badge"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  padding: '2px 8px',
+                  borderRadius: '9999px',
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  backgroundColor: 'rgba(59, 130, 246, 0.15)',
+                  color: '#60a5fa',
+                  border: '1px solid rgba(59, 130, 246, 0.3)',
+                }}
+              >
+                <span>🔄</span>
+                <span>Recurring</span>
+              </span>
+            )}
           </div>
 
           {/* Subtitle Details: Due date, estimated duration, subtask count */}

@@ -11,11 +11,17 @@ import {
   createEventSchema,
   updateEventSchema,
   calendarRangeQuerySchema,
+  editOccurrenceSchema,
 } from '@workaholic/shared';
 import { calendarService } from './calendar.service.js';
 
 const idParamSchema = z.object({
   id: idSchema,
+});
+
+const occurrenceParamSchema = z.object({
+  id: idSchema,
+  occurrenceKey: z.string().min(1),
 });
 
 /**
@@ -190,6 +196,52 @@ export async function calendarRoutes(fastify, _opts) {
     async (request, reply) => {
       await calendarService.deleteEvent(request.params.id, request.workspace.id);
       return sendSuccess(reply, { deleted: true, id: request.params.id });
+    },
+  );
+
+  // Edit occurrence of a recurring event (THIS, THIS_AND_FOLLOWING, SERIES)
+  fastify.patch(
+    '/events/:id/occurrences/:occurrenceKey',
+    {
+      preHandler: [
+        ...authHooks,
+        validateRequest({
+          params: occurrenceParamSchema,
+          body: editOccurrenceSchema,
+        }),
+      ],
+    },
+    async (request, reply) => {
+      const result = await calendarService.editOccurrence(
+        request.workspace.id,
+        request.user,
+        request.params.id,
+        request.params.occurrenceKey,
+        request.body,
+      );
+      return sendSuccess(reply, result);
+    },
+  );
+
+  // Cancel occurrence of a recurring event
+  fastify.delete(
+    '/events/:id/occurrences/:occurrenceKey',
+    {
+      preHandler: [
+        ...authHooks,
+        validateRequest({
+          params: occurrenceParamSchema,
+        }),
+      ],
+    },
+    async (request, reply) => {
+      const result = await calendarService.cancelOccurrence(
+        request.workspace.id,
+        request.user,
+        request.params.id,
+        request.params.occurrenceKey,
+      );
+      return sendSuccess(reply, result);
     },
   );
 }

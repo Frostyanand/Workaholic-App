@@ -166,12 +166,23 @@ export function TodayPage() {
     });
 
     try {
-      if (isCompleted) {
-        await tasksApi.reopenTask(task.id, workspaceId);
-        toast.info('Task reopened');
+      if (task.isRecurring && task.occurrenceKey) {
+        const actualTaskId = task.taskId || task.id;
+        if (isCompleted) {
+          await tasksApi.reopenTaskOccurrence(actualTaskId, task.occurrenceKey, workspaceId);
+          toast.info('Occurrence reopened');
+        } else {
+          await tasksApi.completeTaskOccurrence(actualTaskId, task.occurrenceKey, workspaceId);
+          toast.success('Occurrence completed');
+        }
       } else {
-        await tasksApi.completeTask(task.id, workspaceId);
-        toast.success('Task completed');
+        if (isCompleted) {
+          await tasksApi.reopenTask(task.id, workspaceId);
+          toast.info('Task reopened');
+        } else {
+          await tasksApi.completeTask(task.id, workspaceId);
+          toast.success('Task completed');
+        }
       }
       loadCockpit();
     } catch (err) {

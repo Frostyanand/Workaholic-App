@@ -1,5 +1,10 @@
 import { pool } from '../../core/db.js';
 import { extractAllDayDates } from '@workaholic/shared';
+import { expandOccurrences } from '../recurrence/recurrence.engine.js';
+import {
+  mapRecurrenceRuleRow,
+  getExceptionsByRuleIds,
+} from '../recurrence/recurrence.repository.js';
 
 /**
  * Maps raw SQL row to clean event domain object
@@ -32,6 +37,9 @@ export function mapEventRow(row) {
     projectIds: Array.isArray(row.project_ids) ? row.project_ids.filter(Boolean) : [],
     ...(row.calendar_name ? { calendarName: row.calendar_name } : {}),
     ...(row.calendar_color ? { calendarColor: row.calendar_color } : {}),
+    ...(row.recurrence_rule_raw
+      ? { recurrenceRule: mapRecurrenceRuleRow(row.recurrence_rule_raw) }
+      : {}),
   };
 
   // Authoritative whole-date semantics for all-day events
@@ -183,21 +191,23 @@ export async function findEventById(eventId, workspaceId, client = pool) {
     SELECT e.*,
       c.name AS calendar_name,
       c.color AS calendar_color,
+      to_jsonb(rr.*) AS recurrence_rule_raw,
       COALESCE(array_remove(array_agg(DISTINCT et.task_id), NULL), '{}') AS task_ids,
       COALESCE(array_remove(array_agg(DISTINCT ep.project_id), NULL), '{}') AS project_ids
     FROM events e
     JOIN calendars c ON e.calendar_id = c.id
+    LEFT JOIN recurrence_rules rr ON e.recurrence_rule_id = rr.id
     LEFT JOIN event_tasks et ON e.id = et.event_id
     LEFT JOIN event_projects ep ON e.id = ep.event_id
     WHERE e.id = $1 AND e.workspace_id = $2 AND e.deleted_at IS NULL
-    GROUP BY e.id, c.name, c.color;
+    GROUP BY e.id, c.name, c.color, rr.id;
   `;
   const result = await client.query(sql, [eventId, workspaceId]);
   return mapEventRow(result.rows[0]);
 }
 
 /**
- * Find events in a temporal window [start, end]
+ * Find events in a temporal window [start, end], expanding recurring events dynamically
  * @param {string} workspaceId
  * @param {object} options
  * @param {import('pg').Pool | import('pg').PoolClient} [client=pool]
@@ -208,8 +218,11 @@ export async function findEventsByRange(workspaceId, options, client = pool) {
   const conditions = [
     'e.workspace_id = $1',
     'e.deleted_at IS NULL',
-    'e.start_at <= $3',
-    'e.end_at >= $2',
+    `(
+      (e.recurrence_rule_id IS NULL AND e.start_at <= $3 AND e.end_at >= $2)
+      OR
+      (e.recurrence_rule_id IS NOT NULL AND rr.deleted_at IS NULL AND rr.start_at <= $3 AND (rr.end_at IS NULL OR rr.end_at >= $2))
+    )`,
   ];
   const values = [workspaceId, start, end];
   let paramIdx = 4;
@@ -228,19 +241,106 @@ export async function findEventsByRange(workspaceId, options, client = pool) {
     SELECT e.*,
       c.name AS calendar_name,
       c.color AS calendar_color,
+      to_jsonb(rr.*) AS recurrence_rule_raw,
       COALESCE(array_remove(array_agg(DISTINCT et.task_id), NULL), '{}') AS task_ids,
       COALESCE(array_remove(array_agg(DISTINCT ep.project_id), NULL), '{}') AS project_ids
     FROM events e
     JOIN calendars c ON e.calendar_id = c.id
+    LEFT JOIN recurrence_rules rr ON e.recurrence_rule_id = rr.id
     LEFT JOIN event_tasks et ON e.id = et.event_id
     LEFT JOIN event_projects ep ON e.id = ep.event_id
     WHERE ${conditions.join(' AND ')}
-    GROUP BY e.id, c.name, c.color
+    GROUP BY e.id, c.name, c.color, rr.id
     ORDER BY e.is_all_day DESC, e.start_at ASC;
   `;
 
   const result = await client.query(sql, values);
-  return result.rows.map(mapEventRow);
+  const rows = result.rows;
+
+  const singleEvents = [];
+  const recurringMasterRows = [];
+  const recurringRuleIds = [];
+
+  for (const row of rows) {
+    if (row.recurrence_rule_id && row.recurrence_rule_raw) {
+      recurringMasterRows.push(row);
+      recurringRuleIds.push(row.recurrence_rule_id);
+    } else {
+      singleEvents.push(mapEventRow(row));
+    }
+  }
+
+  if (recurringMasterRows.length === 0) {
+    return singleEvents;
+  }
+
+  // Batch fetch exceptions for all relevant recurring rules in workspace
+  const allExceptions = await getExceptionsByRuleIds(recurringRuleIds, client);
+  const exceptionsByRule = new Map();
+  for (const ex of allExceptions) {
+    if (!exceptionsByRule.has(ex.recurrenceRuleId)) {
+      exceptionsByRule.set(ex.recurrenceRuleId, []);
+    }
+    exceptionsByRule.get(ex.recurrenceRuleId).push(ex);
+  }
+
+  const occurrences = [];
+  for (const row of recurringMasterRows) {
+    const baseEvent = mapEventRow(row);
+    const rule = mapRecurrenceRuleRow(row.recurrence_rule_raw);
+    const durationMs =
+      baseEvent.startAt && baseEvent.endAt
+        ? Math.max(0, new Date(baseEvent.endAt).getTime() - new Date(baseEvent.startAt).getTime())
+        : 0;
+    const ruleExceptions = exceptionsByRule.get(rule.id) || [];
+
+    const generated = expandOccurrences(rule, start, end, {
+      durationMs,
+      isAllDay: baseEvent.isAllDay,
+      exceptions: ruleExceptions,
+    });
+
+    for (const occ of generated) {
+      const projected = {
+        ...baseEvent,
+        id: `${baseEvent.id}_${occ.occurrenceKey}`,
+        baseEventId: baseEvent.id,
+        occurrenceKey: occ.occurrenceKey,
+        isRecurring: true,
+        startAt: occ.startAt,
+        endAt: occ.endAt,
+        isException: occ.isException,
+      };
+
+      if (baseEvent.isAllDay) {
+        const dates = extractAllDayDates(occ.startAt, occ.endAt);
+        projected.startDate = dates.startDate;
+        projected.endDate = dates.endDate;
+      }
+
+      if (occ.exception) {
+        if (occ.exception.overrideTitle) projected.title = occ.exception.overrideTitle;
+        if (
+          occ.exception.overrideDescription !== undefined &&
+          occ.exception.overrideDescription !== null
+        ) {
+          projected.description = occ.exception.overrideDescription;
+        }
+        if (occ.exception.overrideLocation) projected.location = occ.exception.overrideLocation;
+        if (occ.exception.overrideStatus) projected.status = occ.exception.overrideStatus;
+      }
+
+      occurrences.push(projected);
+    }
+  }
+
+  const combined = [...singleEvents, ...occurrences];
+  combined.sort((a, b) => {
+    if (a.isAllDay !== b.isAllDay) return a.isAllDay ? -1 : 1;
+    return new Date(a.startAt).getTime() - new Date(b.startAt).getTime();
+  });
+
+  return combined;
 }
 
 /**

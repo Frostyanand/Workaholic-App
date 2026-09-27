@@ -91,6 +91,29 @@ export const RECURRENCE_FREQUENCY = Object.freeze({
   YEARLY: 'YEARLY',
 });
 
+export const RECURRENCE_EDIT_MODE = Object.freeze({
+  THIS: 'THIS',
+  THIS_AND_FOLLOWING: 'THIS_AND_FOLLOWING',
+  SERIES: 'SERIES',
+});
+
+export const RECURRENCE_EXCEPTION_TYPE = Object.freeze({
+  CANCELLED: 'CANCELLED',
+  MODIFIED: 'MODIFIED',
+  RESCHEDULED: 'RESCHEDULED',
+  COMPLETED: 'COMPLETED',
+});
+
+export const WEEKDAY = Object.freeze({
+  SU: 0,
+  MO: 1,
+  TU: 2,
+  WE: 3,
+  TH: 4,
+  FR: 5,
+  SA: 6,
+});
+
 export const PLATFORM = Object.freeze({
   WEB: 'WEB',
   WINDOWS: 'WINDOWS',

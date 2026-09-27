@@ -6,6 +6,9 @@ import * as workBlocksRepo from './work-blocks.repository.js';
 import * as projectsRepo from '../projects/projects.repository.js';
 import * as boardsRepo from '../boards/boards.repository.js';
 import * as columnsRepo from '../boards/columns.repository.js';
+import * as recurrenceRepo from '../recurrence/recurrence.repository.js';
+import * as taskOccurrencesRepo from './task_occurrences.repository.js';
+import { expandOccurrences } from '../recurrence/recurrence.engine.js';
 import { NotFoundError, ValidationError, ConflictError } from '../../core/errors.js';
 
 /**
@@ -103,6 +106,8 @@ export class TasksService {
     projects = projectsRepo,
     boards = boardsRepo,
     columns = columnsRepo,
+    taskOccurrences = taskOccurrencesRepo,
+    recurrence = recurrenceRepo,
   ) {
     this.repo = repo;
     this.labelsRepo = labels;
@@ -112,6 +117,8 @@ export class TasksService {
     this.projectsRepo = projects;
     this.boardsRepo = boards;
     this.columnsRepo = columns;
+    this.taskOccurrencesRepo = taskOccurrences;
+    this.recurrenceRepo = recurrence;
   }
 
   /**
@@ -180,6 +187,20 @@ export class TasksService {
     const priority = normalizePriority(taskData.priority);
     const status = normalizeStatus(derivedStatus);
 
+    let recurrenceRuleId = taskData.recurrenceRuleId || null;
+    if (taskData.recurrence) {
+      const rule = await recurrenceRepo.createRecurrenceRule(
+        {
+          ...taskData.recurrence,
+          workspaceId,
+          startAt: taskData.dueAt || taskData.startAt || new Date().toISOString(),
+          timezone: taskData.recurrence.timezone || 'UTC',
+        },
+        client,
+      );
+      recurrenceRuleId = rule.id;
+    }
+
     const task = await this.repo.createTask(
       {
         ...taskData,
@@ -187,6 +208,7 @@ export class TasksService {
         createdBy: userId,
         parentTaskId,
         priority,
+        recurrenceRuleId,
         ...(status ? { status } : {}),
       },
       client,
@@ -339,6 +361,27 @@ export class TasksService {
       payload.status = normalizeStatus(payload.status);
     }
     delete payload.version;
+
+    if (updateData.recurrence) {
+      if (current.recurrenceRuleId) {
+        await recurrenceRepo.updateRecurrenceRule(
+          current.recurrenceRuleId,
+          updateData.recurrence,
+          client,
+        );
+      } else {
+        const rule = await recurrenceRepo.createRecurrenceRule(
+          {
+            ...updateData.recurrence,
+            workspaceId,
+            startAt: payload.dueAt || current.dueAt || new Date().toISOString(),
+            timezone: updateData.recurrence.timezone || 'UTC',
+          },
+          client,
+        );
+        payload.recurrenceRuleId = rule.id;
+      }
+    }
 
     const updated = await this.repo.updateTask(
       taskId,
@@ -782,6 +825,464 @@ export class TasksService {
     const label = await this.labelsRepo.findLabelById(labelId, workspaceId, client);
     if (!label) throw new NotFoundError('Label not found');
     return this.labelsRepo.deleteLabel(labelId, workspaceId, client);
+  }
+
+  /**
+   * Complete an individual occurrence of a recurring task.
+   * Records completion in task_occurrences (sparse representation).
+   * Strict Invariants:
+   * - Does NOT mutate master task tasks.due_at (satisfies BR-TASK-008).
+   * - Does NOT advance any cursor.
+   * - Canonical occurrence identity remains immutable.
+   * - Series becomes COMPLETED iff all occurrences in bounded series (COUNT or UNTIL) are accounted for.
+   */
+  async completeOccurrence(workspaceId, userId, taskId, occurrenceKey, client = undefined) {
+    const task = await this.repo.findTaskById(
+      taskId,
+      workspaceId,
+      { includeDeleted: false },
+      client,
+    );
+    if (!task) {
+      throw new NotFoundError('Task not found');
+    }
+    if (!task.recurrenceRuleId) {
+      throw new ValidationError('Task is not part of a recurring series');
+    }
+
+    const rule = await this.recurrenceRepo.getRecurrenceRuleById(task.recurrenceRuleId, client);
+    if (!rule) {
+      throw new NotFoundError('Recurrence rule not found');
+    }
+
+    const completedAt = new Date().toISOString();
+    const isAllDay = !occurrenceKey.includes('T');
+    const originalDueAt = isAllDay ? null : occurrenceKey;
+    const originalDueDate = isAllDay ? occurrenceKey : null;
+
+    const existing = await this.taskOccurrencesRepo.findTaskOccurrence(
+      taskId,
+      occurrenceKey,
+      workspaceId,
+      client,
+    );
+    const overrideDueAt = existing ? existing.overrideDueAt : null;
+    const overrideDueDate = existing ? existing.overrideDueDate : null;
+
+    // 1. Sparse record in task_occurrences
+    await this.taskOccurrencesRepo.upsertTaskOccurrence(
+      {
+        workspaceId,
+        taskId,
+        occurrenceKey,
+        isAllDay,
+        originalDueAt,
+        originalDueDate,
+        overrideDueAt,
+        overrideDueDate,
+        status: 'COMPLETED',
+        completedAt,
+      },
+      client,
+    );
+
+    // 2. Evaluate boundary completion for master series:
+    // Only bounded series (COUNT or UNTIL) can automatically complete. Infinite series never automatically complete.
+    let seriesCompleted = false;
+    if (rule.occurrenceCount && rule.occurrenceCount > 0) {
+      const counts = await this.taskOccurrencesRepo.countAccountedOccurrencesForTask(
+        taskId,
+        workspaceId,
+        client,
+      );
+      if (counts.accountedCount >= rule.occurrenceCount) {
+        await this.repo.updateTask(
+          taskId,
+          workspaceId,
+          { status: 'COMPLETED', completedAt },
+          null,
+          client,
+        );
+        seriesCompleted = true;
+      }
+    } else if (rule.endAt) {
+      // UNTIL-bounded series: check if all occurrences up to endAt are accounted for
+      const allOccurrences = expandOccurrences(rule, rule.startAt, rule.endAt, {
+        maxOccurrences: 2000,
+      });
+      const overrides = await this.taskOccurrencesRepo.findOccurrencesByTaskId(
+        taskId,
+        workspaceId,
+        client,
+      );
+      const accountedKeys = new Set(
+        overrides
+          .filter(o => o.status === 'COMPLETED' || o.status === 'CANCELLED')
+          .map(o => o.occurrenceKey),
+      );
+      const allAccounted =
+        allOccurrences.length > 0 && allOccurrences.every(o => accountedKeys.has(o.occurrenceKey));
+      if (allAccounted) {
+        await this.repo.updateTask(
+          taskId,
+          workspaceId,
+          { status: 'COMPLETED', completedAt },
+          null,
+          client,
+        );
+        seriesCompleted = true;
+      }
+    }
+
+    return {
+      success: true,
+      message: 'Task occurrence completed',
+      taskId,
+      occurrenceKey,
+      status: 'COMPLETED',
+      completedAt,
+      isAllDay,
+      originalDueAt,
+      originalDueDate,
+      overrideDueAt,
+      overrideDueDate,
+      effectiveDueAt: overrideDueAt || originalDueAt,
+      effectiveDueDate: overrideDueDate || originalDueDate,
+      seriesCompleted,
+    };
+  }
+
+  /**
+   * Reopen an individual occurrence of a recurring task.
+   * Strict Invariants:
+   * - Does NOT mutate master task tasks.due_at.
+   * - Deletes non-rescheduled overrides (reverts to implicit dynamic TODO).
+   * - Preserves reschedule override if rescheduled.
+   * - If master task series was COMPLETED, reverts master task to TODO.
+   */
+  async reopenOccurrence(workspaceId, userId, taskId, occurrenceKey, client = undefined) {
+    const task = await this.repo.findTaskById(
+      taskId,
+      workspaceId,
+      { includeDeleted: false },
+      client,
+    );
+    if (!task) {
+      throw new NotFoundError('Task not found');
+    }
+    if (!task.recurrenceRuleId) {
+      throw new ValidationError('Task is not part of a recurring series');
+    }
+
+    const existing = await this.taskOccurrencesRepo.findTaskOccurrence(
+      taskId,
+      occurrenceKey,
+      workspaceId,
+      client,
+    );
+    if (existing) {
+      if (existing.overrideDueAt || existing.overrideDueDate) {
+        // Rescheduled: retain override, reset status to TODO and completedAt to null
+        await this.taskOccurrencesRepo.upsertTaskOccurrence(
+          {
+            workspaceId,
+            taskId,
+            occurrenceKey,
+            isAllDay: existing.isAllDay,
+            originalDueAt: existing.originalDueAt,
+            originalDueDate: existing.originalDueDate,
+            overrideDueAt: existing.overrideDueAt,
+            overrideDueDate: existing.overrideDueDate,
+            status: 'TODO',
+            completedAt: null,
+          },
+          client,
+        );
+      } else {
+        // Not rescheduled: delete row (reverts to implicit dynamic TODO)
+        await this.taskOccurrencesRepo.deleteTaskOccurrence(
+          taskId,
+          occurrenceKey,
+          workspaceId,
+          client,
+        );
+      }
+    }
+
+    // If master task was COMPLETED, revert to TODO
+    if (task.status === 'COMPLETED') {
+      await this.repo.updateTask(
+        taskId,
+        workspaceId,
+        { status: 'TODO', completedAt: null },
+        null,
+        client,
+      );
+    }
+
+    return {
+      success: true,
+      message: 'Task occurrence reopened',
+      taskId,
+      occurrenceKey,
+      status: 'TODO',
+    };
+  }
+
+  /**
+   * Cancel / skip an individual occurrence of a recurring task.
+   */
+  async cancelOccurrence(workspaceId, userId, taskId, occurrenceKey, client = undefined) {
+    const task = await this.repo.findTaskById(
+      taskId,
+      workspaceId,
+      { includeDeleted: false },
+      client,
+    );
+    if (!task) {
+      throw new NotFoundError('Task not found');
+    }
+    if (!task.recurrenceRuleId) {
+      throw new ValidationError('Task is not part of a recurring series');
+    }
+
+    const rule = await this.recurrenceRepo.getRecurrenceRuleById(task.recurrenceRuleId, client);
+    if (!rule) {
+      throw new NotFoundError('Recurrence rule not found');
+    }
+
+    const isAllDay = !occurrenceKey.includes('T');
+    const originalDueAt = isAllDay ? null : occurrenceKey;
+    const originalDueDate = isAllDay ? occurrenceKey : null;
+
+    await this.taskOccurrencesRepo.upsertTaskOccurrence(
+      {
+        workspaceId,
+        taskId,
+        occurrenceKey,
+        isAllDay,
+        originalDueAt,
+        originalDueDate,
+        status: 'CANCELLED',
+        completedAt: null,
+      },
+      client,
+    );
+
+    // Check if bounded series is now fully accounted for (COUNT or UNTIL)
+    let seriesCompleted = false;
+    if (rule.occurrenceCount && rule.occurrenceCount > 0) {
+      const counts = await this.taskOccurrencesRepo.countAccountedOccurrencesForTask(
+        taskId,
+        workspaceId,
+        client,
+      );
+      if (counts.accountedCount >= rule.occurrenceCount) {
+        await this.repo.updateTask(
+          taskId,
+          workspaceId,
+          { status: 'COMPLETED', completedAt: new Date().toISOString() },
+          null,
+          client,
+        );
+        seriesCompleted = true;
+      }
+    } else if (rule.endAt) {
+      const allOccurrences = expandOccurrences(rule, rule.startAt, rule.endAt, {
+        maxOccurrences: 2000,
+      });
+      const overrides = await this.taskOccurrencesRepo.findOccurrencesByTaskId(
+        taskId,
+        workspaceId,
+        client,
+      );
+      const accountedKeys = new Set(
+        overrides
+          .filter(o => o.status === 'COMPLETED' || o.status === 'CANCELLED')
+          .map(o => o.occurrenceKey),
+      );
+      const allAccounted =
+        allOccurrences.length > 0 && allOccurrences.every(o => accountedKeys.has(o.occurrenceKey));
+      if (allAccounted) {
+        await this.repo.updateTask(
+          taskId,
+          workspaceId,
+          { status: 'COMPLETED', completedAt: new Date().toISOString() },
+          null,
+          client,
+        );
+        seriesCompleted = true;
+      }
+    }
+
+    return {
+      success: true,
+      message: 'Task occurrence cancelled',
+      taskId,
+      occurrenceKey,
+      status: 'CANCELLED',
+      seriesCompleted,
+    };
+  }
+
+  /**
+   * Reschedule an individual occurrence of a recurring task.
+   * Invariant: canonical occurrenceKey remains the original nominal identity.
+   */
+  async rescheduleOccurrence(
+    workspaceId,
+    userId,
+    taskId,
+    occurrenceKey,
+    payload = {},
+    client = undefined,
+  ) {
+    const task = await this.repo.findTaskById(
+      taskId,
+      workspaceId,
+      { includeDeleted: false },
+      client,
+    );
+    if (!task) {
+      throw new NotFoundError('Task not found');
+    }
+    if (!task.recurrenceRuleId) {
+      throw new ValidationError('Task is not part of a recurring series');
+    }
+
+    const isAllDay = !occurrenceKey.includes('T');
+    const originalDueAt = isAllDay ? null : occurrenceKey;
+    const originalDueDate = isAllDay ? occurrenceKey : null;
+    const overrideDueAt = isAllDay ? null : payload.overrideDueAt || payload.newDueAt;
+    const overrideDueDate = isAllDay ? payload.overrideDueDate || payload.newDueDate : null;
+
+    const existing = await this.taskOccurrencesRepo.findTaskOccurrence(
+      taskId,
+      occurrenceKey,
+      workspaceId,
+      client,
+    );
+    const currentStatus = existing ? existing.status : 'TODO';
+    const currentCompletedAt = existing ? existing.completedAt : null;
+
+    await this.taskOccurrencesRepo.upsertTaskOccurrence(
+      {
+        workspaceId,
+        taskId,
+        occurrenceKey,
+        isAllDay,
+        originalDueAt,
+        originalDueDate,
+        overrideDueAt,
+        overrideDueDate,
+        status: currentStatus,
+        completedAt: currentCompletedAt,
+      },
+      client,
+    );
+
+    return {
+      success: true,
+      message: 'Task occurrence rescheduled',
+      taskId,
+      occurrenceKey,
+      isAllDay,
+      effectiveDueAt: overrideDueAt,
+      effectiveDueDate: overrideDueDate,
+      status: currentStatus,
+    };
+  }
+
+  /**
+   * Expands and returns effective occurrences for a recurring task in a date range
+   */
+  async getTaskOccurrences(workspaceId, taskId, startAt, endAt, client = undefined) {
+    const task = await this.repo.findTaskById(
+      taskId,
+      workspaceId,
+      { includeDeleted: false },
+      client,
+    );
+    if (!task) {
+      throw new NotFoundError('Task not found');
+    }
+    if (!task.recurrenceRuleId) {
+      return [
+        {
+          taskId: task.id,
+          occurrenceKey: task.dueAt || task.createdAt,
+          dueAt: task.dueAt,
+          isAllDay: false,
+          status: task.status,
+          completedAt: task.completedAt,
+        },
+      ];
+    }
+
+    const rule = await this.recurrenceRepo.getRecurrenceRuleById(task.recurrenceRuleId, client);
+    if (!rule) {
+      throw new NotFoundError('Recurrence rule not found');
+    }
+
+    const nominalOccurrences = expandOccurrences(rule, startAt, endAt);
+    const overrides = await this.taskOccurrencesRepo.findOccurrencesByTaskId(
+      taskId,
+      workspaceId,
+      client,
+    );
+    const overrideMap = new Map(overrides.map(o => [o.occurrenceKey, o]));
+
+    const items = nominalOccurrences.map(nom => {
+      const override = overrideMap.get(nom.occurrenceKey);
+      const isAllDay = !nom.occurrenceKey.includes('T');
+      return {
+        taskId: task.id,
+        taskTitle: task.title,
+        taskPriority: task.priority,
+        occurrenceKey: nom.occurrenceKey,
+        isAllDay,
+        nominalDueAt: isAllDay ? null : nom.startAt,
+        nominalDueDate: isAllDay ? nom.occurrenceKey : null,
+        effectiveDueAt: override?.overrideDueAt || (isAllDay ? null : nom.startAt),
+        effectiveDueDate: override?.overrideDueDate || (isAllDay ? nom.occurrenceKey : null),
+        status: override ? override.status : 'TODO',
+        completedAt: override ? override.completedAt : null,
+      };
+    });
+
+    // Also include any occurrences whose nominal fell outside but was rescheduled into [startAt, endAt]
+    for (const ov of overrides) {
+      if (ov.overrideDueAt || ov.overrideDueDate) {
+        const effDate = (ov.overrideDueAt || ov.overrideDueDate).slice(0, 10);
+        const startDate = startAt.slice(0, 10);
+        const endDate = endAt.slice(0, 10);
+        if (
+          effDate >= startDate &&
+          effDate <= endDate &&
+          !nominalOccurrences.some(n => n.occurrenceKey === ov.occurrenceKey)
+        ) {
+          items.push({
+            taskId: task.id,
+            taskTitle: task.title,
+            taskPriority: task.priority,
+            occurrenceKey: ov.occurrenceKey,
+            isAllDay: ov.isAllDay,
+            nominalDueAt: ov.originalDueAt,
+            nominalDueDate: ov.originalDueDate,
+            effectiveDueAt: ov.overrideDueAt || ov.originalDueAt,
+            effectiveDueDate: ov.overrideDueDate || ov.originalDueDate,
+            status: ov.status,
+            completedAt: ov.completedAt,
+          });
+        }
+      }
+    }
+
+    return items.sort((a, b) => {
+      const aVal = a.effectiveDueAt || a.effectiveDueDate || '';
+      const bVal = b.effectiveDueAt || b.effectiveDueDate || '';
+      return aVal.localeCompare(bVal);
+    });
   }
 }
 

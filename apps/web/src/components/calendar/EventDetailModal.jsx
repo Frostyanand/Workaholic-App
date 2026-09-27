@@ -82,6 +82,7 @@ export function EventDetailModal({ isOpen, onClose, event, onEdit, onDelete }) {
             </span>
           </div>
           {isAllDay && <Badge variant="primary">All-Day</Badge>}
+          {event.isRecurring && <Badge variant="secondary">🔄 Recurring</Badge>}
           {event.isWorkBlock && <Badge variant="success">Work Block</Badge>}
           {event.isDeadline && <Badge variant="danger">Deadline</Badge>}
           {event.visibility && (
@@ -166,18 +167,49 @@ export function EventDetailModal({ isOpen, onClose, event, onEdit, onDelete }) {
           }}
         >
           {!event.isWorkBlock && !event.isDeadline ? (
-            <Button
-              variant="danger"
-              size="sm"
-              onClick={() => {
-                if (window.confirm('Are you sure you want to delete this event?')) {
-                  onDelete(event.id);
-                  onClose();
-                }
-              }}
-            >
-              Delete
-            </Button>
+            event.isRecurring ? (
+              <div style={{ display: 'flex', gap: 'var(--space-xs)' }}>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  id="btn-delete-occurrence"
+                  onClick={() => {
+                    if (window.confirm('Delete this occurrence only?')) {
+                      onDelete(event, 'THIS');
+                      onClose();
+                    }
+                  }}
+                >
+                  Delete Occurrence
+                </Button>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  id="btn-delete-series"
+                  onClick={() => {
+                    if (window.confirm('Delete the entire recurring series?')) {
+                      onDelete(event, 'SERIES');
+                      onClose();
+                    }
+                  }}
+                >
+                  Delete Series
+                </Button>
+              </div>
+            ) : (
+              <Button
+                variant="danger"
+                size="sm"
+                onClick={() => {
+                  if (window.confirm('Are you sure you want to delete this event?')) {
+                    onDelete(event.id);
+                    onClose();
+                  }
+                }}
+              >
+                Delete
+              </Button>
+            )
           ) : (
             <div />
           )}

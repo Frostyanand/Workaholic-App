@@ -490,7 +490,9 @@ test.describe('Task Management E2E Journeys', () => {
 
     // Verify task returns to active list in Due Today
     await expect(
-      dueTodaySection.getByRole('checkbox', { name: /Complete Authoritative Architecture Review/i }),
+      dueTodaySection.getByRole('checkbox', {
+        name: /Complete Authoritative Architecture Review/i,
+      }),
     ).toBeVisible();
   });
 

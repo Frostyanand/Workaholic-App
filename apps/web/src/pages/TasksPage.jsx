@@ -75,6 +75,22 @@ export function TasksPage() {
   async function handleToggleComplete(task) {
     const originalStatus = task.status;
     const isCurrentlyComplete = originalStatus === 'COMPLETED';
+    const isRecurring = Boolean(task.recurrenceRuleId || task.recurrence_rule_id);
+
+    // If recurring and completing an occurrence
+    if (isRecurring && !isCurrentlyComplete) {
+      try {
+        const occKey = task.dueAt || task.due_at || new Date().toISOString();
+        await tasksApi.completeTaskOccurrence(task.id, occKey, activeWorkspaceId);
+        toast.success('Occurrence completed.');
+        await loadTasks();
+        return;
+      } catch (err) {
+        toast.error(`Failed to complete recurring occurrence: ${err.message}`);
+        return;
+      }
+    }
+
     const optimisticStatus = isCurrentlyComplete ? 'TODO' : 'COMPLETED';
 
     // Optimistic state update
