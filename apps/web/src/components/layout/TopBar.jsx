@@ -1,8 +1,10 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
-import { Menu, Plus, Shield } from 'lucide-react';
+import { Menu, Plus, Shield, Bell } from 'lucide-react';
 import { Button } from '../common/Button.jsx';
 import { Badge } from '../common/Badge.jsx';
+import { NotificationCenter } from '../notifications/NotificationCenter.jsx';
+import { fetchUnreadCount } from '../../services/notifications.api.js';
 
 /**
  * Canonical Application Top Bar.
@@ -10,6 +12,14 @@ import { Badge } from '../common/Badge.jsx';
  */
 export function TopBar({ onToggleMobileNav, isMobileNavOpen, onOpenQuickTask }) {
   const location = useLocation();
+  const [isNotificationOpen, setIsNotificationOpen] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  useEffect(() => {
+    fetchUnreadCount()
+      .then(setUnreadCount)
+      .catch(() => {});
+  }, []);
 
   function getBreadcrumb() {
     const path = location.pathname;
@@ -76,13 +86,64 @@ export function TopBar({ onToggleMobileNav, isMobileNavOpen, onOpenQuickTask }) 
         </span>
       </div>
 
-      {/* Right: Workspace Indicator & Quick Task Action */}
+      {/* Right: Workspace Indicator, Notification Bell & Quick Task Action */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
         {/* Workspace Context Badge (UX-SPECIFICATION Section 85) */}
         <div className="workspace-badge-container">
           <Badge variant="muted" size="sm" icon={Shield}>
             Personal
           </Badge>
+        </div>
+
+        {/* Notification Bell Button */}
+        <div style={{ position: 'relative' }}>
+          <button
+            type="button"
+            onClick={() => setIsNotificationOpen(prev => !prev)}
+            aria-label="Notifications"
+            style={{
+              background: 'none',
+              border: 'none',
+              color: isNotificationOpen ? 'var(--color-primary)' : 'var(--text-secondary)',
+              cursor: 'pointer',
+              padding: '8px',
+              borderRadius: 'var(--radius-sm)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              position: 'relative',
+            }}
+          >
+            <Bell size={18} />
+            {unreadCount > 0 && (
+              <span
+                style={{
+                  position: 'absolute',
+                  top: '4px',
+                  right: '4px',
+                  backgroundColor: 'var(--color-danger, #ef4444)',
+                  color: '#fff',
+                  borderRadius: '10px',
+                  fontSize: '0.6875rem',
+                  fontWeight: 700,
+                  minWidth: '16px',
+                  height: '16px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: '0 4px',
+                }}
+              >
+                {unreadCount > 99 ? '99+' : unreadCount}
+              </span>
+            )}
+          </button>
+
+          <NotificationCenter
+            isOpen={isNotificationOpen}
+            onClose={() => setIsNotificationOpen(false)}
+            onUnreadCountChange={setUnreadCount}
+          />
         </div>
 
         {/* Quick Task Capture (UX-SPECIFICATION Section 9, UX-T11) */}

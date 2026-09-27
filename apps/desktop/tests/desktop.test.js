@@ -21,6 +21,8 @@ describe('Desktop Electron Foundation (Task 1.3)', () => {
       'desktop:window-minimize',
       'desktop:window-maximize',
       'desktop:window-close',
+      'desktop:show-notification',
+      'desktop:schedule-notification',
     ]);
   });
 
@@ -53,6 +55,8 @@ describe('Desktop Electron Foundation (Task 1.3)', () => {
     expect(typeof api.minimizeWindow).toBe('function');
     expect(typeof api.maximizeWindow).toBe('function');
     expect(typeof api.closeWindow).toBe('function');
+    expect(typeof api.showNotification).toBe('function');
+    expect(typeof api.scheduleNotification).toBe('function');
 
     // Test successful invoke for whitelisted channel
     const pingResult = await api.ping();

@@ -113,6 +113,15 @@ export class InternalError extends AppError {
 }
 
 /**
+ * 400 Not Connected Error
+ */
+export class NotConnectedError extends AppError {
+  constructor(message = 'Integration not connected') {
+    super(ERROR_CODE.NOT_CONNECTED || 'NOT_CONNECTED', message, 400);
+  }
+}
+
+/**
  * Standard Fastify error formatter strictly conforming to docs/15.API-SPECIFICATION.md
  * Never leaks database details, stack traces, credentials, or sensitive internals.
  *

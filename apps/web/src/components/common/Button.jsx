@@ -1,5 +1,51 @@
 import React from 'react';
 
+const SIZE_STYLES = {
+  sm: {
+    padding: '6px 12px',
+    fontSize: '0.8125rem',
+    minHeight: '36px',
+  },
+  md: {
+    padding: '10px 16px',
+    fontSize: '0.875rem',
+    minHeight: '40px',
+  },
+  lg: {
+    padding: '12px 20px',
+    fontSize: '1rem',
+    minHeight: '48px',
+  },
+};
+
+const VARIANT_STYLES = {
+  primary: {
+    backgroundColor: 'var(--accent-primary)',
+    color: '#ffffff',
+    borderColor: 'var(--accent-primary)',
+  },
+  secondary: {
+    backgroundColor: 'var(--bg-surface-elevated)',
+    color: 'var(--text-primary)',
+    borderColor: 'var(--border-subtle)',
+  },
+  outline: {
+    backgroundColor: 'transparent',
+    color: 'var(--text-primary)',
+    borderColor: 'var(--border-subtle)',
+  },
+  danger: {
+    backgroundColor: 'var(--accent-danger)',
+    color: '#ffffff',
+    borderColor: 'var(--accent-danger)',
+  },
+  ghost: {
+    backgroundColor: 'transparent',
+    color: 'var(--text-secondary)',
+    borderColor: 'transparent',
+  },
+};
+
 /**
  * Accessible Button primitive supporting variants, sizes, loading states, and touch targets.
  * Conforms to docs/14.DESIGN-SYSTEM.md and docs/13.UX-SPECIFICATION.md Section 77.
@@ -40,48 +86,8 @@ export const Button = React.forwardRef(function Button(
     border: '1px solid transparent',
   };
 
-  const sizeStyles =
-    {
-      sm: {
-        padding: '6px 12px',
-        fontSize: '0.8125rem',
-        minHeight: '36px',
-      },
-      md: {
-        padding: '10px 16px',
-        fontSize: '0.875rem',
-        minHeight: '40px',
-      },
-      lg: {
-        padding: '12px 20px',
-        fontSize: '1rem',
-        minHeight: '48px',
-      },
-    }[size] || sizeStyles.md;
-
-  const variantStyles =
-    {
-      primary: {
-        backgroundColor: 'var(--accent-primary)',
-        color: '#ffffff',
-        borderColor: 'var(--accent-primary)',
-      },
-      secondary: {
-        backgroundColor: 'var(--bg-surface-elevated)',
-        color: 'var(--text-primary)',
-        borderColor: 'var(--border-subtle)',
-      },
-      danger: {
-        backgroundColor: 'var(--accent-danger)',
-        color: '#ffffff',
-        borderColor: 'var(--accent-danger)',
-      },
-      ghost: {
-        backgroundColor: 'transparent',
-        color: 'var(--text-secondary)',
-        borderColor: 'transparent',
-      },
-    }[variant] || variantStyles.primary;
+  const sizeStyles = SIZE_STYLES[size] || SIZE_STYLES.md;
+  const variantStyles = VARIANT_STYLES[variant] || VARIANT_STYLES.primary;
 
   return (
     <button

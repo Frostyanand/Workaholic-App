@@ -12,6 +12,7 @@ export function CalendarFilterPanel({
   includeTasks,
   onToggleTasks,
   onCreateCalendar,
+  onOpenGoogleSync,
 }) {
   return (
     <div
@@ -216,6 +217,33 @@ export function CalendarFilterPanel({
           </label>
         </div>
       </div>
+
+      {/* 3. Google Calendar Integration Section */}
+      {onOpenGoogleSync && (
+        <div
+          style={{
+            marginTop: 'auto',
+            paddingTop: 'var(--space-md)',
+            borderTop: '1px solid var(--border-subtle)',
+          }}
+        >
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onOpenGoogleSync}
+            style={{
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px',
+            }}
+          >
+            <span>📅</span>
+            <span>Google Sync</span>
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

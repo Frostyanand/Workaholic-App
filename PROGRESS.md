@@ -1287,4 +1287,255 @@ Following an independent architectural audit of Phase 10 Recurrence, Phase 10.13
 | **Production Build**          | **PASS** | Vite production bundle built cleanly in 4.36s                                                   |
 
 - **Phase 10.13 Status**: **VERIFIED COMPLETE**
-- **Next Phase**: Phase 11: Notifications & Reminders (Awaiting explicit user authorization).
+
+---
+
+## Phase 11 — Notifications & Reminders
+
+### Execution Summary
+
+- **Phase Objective**: Implement comprehensive multi-channel notifications and reminder engine conforming to `docs/10.NOTIFICATION-SPECIFICATION.md`, `docs/7.DATABASE-DESIGN.md`, `docs/11.PERMISSIONS-MODEL.md`, `docs/15.API-SPECIFICATION.md`, `docs/13.UX-SPECIFICATION.md`, `docs/14.DESIGN-SYSTEM.md`, `docs/16.TESTING-STRATEGY.md`, and `docs/17.TEST-MATRIX.md`.
+- **Status**: **VERIFIED COMPLETE**
+
+---
+
+### Key Architectural Deliverables
+
+1. **Authoritative Database Schema & Migrations**:
+   - Migration `1725628809000_create_reminder_and_notification_tables.sql`:
+     - `reminders`: Workspace-scoped (`workspace_id` FK), single target CHECK constraint `chk_reminders_single_target` (`task_id`, `event_id`, or `booking_id`), trigger types (`ABSOLUTE_TIME`, `BEFORE_EVENT`, `BEFORE_DEADLINE`, `RECURRING`), priorities (`LOW`, `NORMAL`, `HIGH`, `CRITICAL`), status (`PENDING`, `ACTIVE`, `CANCELLED`).
+     - `reminder_recipients`: User-scoped (`user_id` FK), unique constraint `uq_reminder_recipient` on `(reminder_id, user_id)`, partial index `idx_reminder_recipients_due` on `(next_trigger_at, recipient_status) WHERE recipient_status = 'PENDING' AND dismissed_at IS NULL`.
+     - `notifications`: User-scoped (`recipient_user_id` FK), `reminder_recipient_id` FK, `notification_type`, title, body, `target_reference` JSONB, `read_at`, `dismissed_at`.
+     - `notification_deliveries`: Delivery audit trail per channel, unique index `uq_notification_delivery` on `(notification_id, COALESCE(device_id, '00000000-0000-0000-0000-000000000000'), channel)` preventing duplicate deliveries.
+     - `trusted_relationships` & `trusted_relationship_permissions`: User-to-user trust model with CHECK constraint `chk_non_self_trust` and permission `trusted.reminders.receive`.
+     - Preferences: Strictly stored in `users.preferences` JSONB without creating a separate table.
+
+2. **Reminders Domain & Trigger Engine (`apps/backend/src/modules/reminders`)**:
+   - `reminders.service.js`, `reminders.repository.js`, `trusted.repository.js`.
+   - Supports absolute-time, relative before-deadline, and relative before-event triggers with automatic timezone offset calculation (`INTERVAL` object and string parser).
+   - Task completion suppression: Completing a task transitions pending reminders to `CANCELLED`.
+   - Event reschedule recalculation: Automatically recalculates `trigger_at` when calendar event `start_at` changes.
+   - Event cancellation suppression: Soft-deleting an event suppresses pending reminders.
+   - Recipient-specific snooze & dismissal: Snoozing or dismissing a reminder updates only the requesting user's recipient record without mutating the underlying source task/event or affecting other recipients.
+
+3. **Notifications Domain & Transport Abstraction (`apps/backend/src/modules/notifications`)**:
+   - `notifications.service.js`, `notifications.repository.js`, `fcm.transport.js`.
+   - In-app notification center generation with immediate in-app delivery records.
+   - Push delivery dispatch through `PushTransportInterface` with pluggable `MockPushTransport`, `LoggingPushTransport`, and `FcmPushTransport`.
+   - Quiet hours evaluation (`users.preferences.notifications.quietHours`): Suppresses non-critical push notifications; allows CRITICAL notifications to bypass quiet hours.
+   - Bounded retries and failure handling: Updates delivery to `RETRYING` on transient errors (`TEMPORARY_FAILURE`); updates to `FAILED` and deactivates invalid push tokens on permanent errors (`PERMANENT_FAILURE`).
+   - Tenant & recipient isolation: Rejects unauthorized access to foreign notifications with 403 Forbidden.
+
+4. **Shared Reminders & Trusted Authorization**:
+   - Cross-workspace recipient sharing strictly guarded by active trusted relationship with `trusted.reminders.receive`.
+   - Revocation prevents future shared reminder creation.
+
+5. **In-Process Reminder Dispatcher (`apps/backend/src/modules/notifications/reminder-dispatcher.js`)**:
+   - Minimal background ticker executing `runReminderSweep` using row-level locking.
+   - Automatically processes due reminders, dispatches notifications, and updates recipient status to `SENT`.
+
+6. **Web Client Notification Center & UI (`apps/web`)**:
+   - `NotificationCenter.jsx`: Interactive drawer dropdown with unread badge, filter tabs ('ALL', 'UNREAD', 'REMINDER'), mark-read, dismiss, snooze actions, and deep-link routing.
+   - `TopBar.jsx`: Notification bell button with real-time unread count badge.
+   - `ReminderPicker.jsx`: Reusable reminder selector for tasks and calendar events.
+   - `notifications.api.js`, `reminders.api.js`: Complete client API bindings.
+
+7. **Desktop & Mobile Implementations**:
+   - `apps/desktop/src/preload.js` & `main.js`: Whitelisted `desktop:show-notification` and `desktop:schedule-notification` IPC channels with security boundaries.
+   - `apps/mobile/src/services/notifications.js`: Android native local alarm and push notification handlers.
+
+### Final Audit Pass & Specification Reconciliations
+
+1. **A. Notification Channels**:
+   - Reconciled against `docs/10.NOTIFICATION-SPECIFICATION.md` Section 4.
+   - Removed unauthorized future channels `EMAIL` and `SMS` from `NOTIFICATION_CHANNEL` in `packages/shared/src/constants/index.js`.
+   - Removed `email` from `notificationPreferencesSchema` in `packages/shared/src/schemas/index.js`.
+   - Updated database migration `1725628809000_create_reminder_and_notification_tables.sql` constraint `chk_delivery_channel` to strictly `('IN_APP', 'PUSH', 'WINDOWS_DESKTOP', 'ANDROID_LOCAL')`. Re-migrated down and up cleanly on live PostgreSQL 16.
+2. **B. Device API Specification**:
+   - Conformed device endpoints to `docs/15.API-SPECIFICATION.md` Section 52:
+     - Implemented authoritative `POST /devices` (registration with 201 Created), `PATCH /devices/{id}`, and `DELETE /devices/{id}`.
+     - Retained `POST /devices/register-push` as backward-compatible alias.
+     - Confirmed `/notification-preferences` is authoritative per Section 51, retaining `/notifications/preferences` as an alias.
+3. **C. Reminder Trigger & Recurrence Engine**:
+   - Verified `RECURRING_TIME` semantics:
+     - `dismissReminder` with `dismissAllOccurrences: false` advances recurrence trigger to next occurrence without disabling future recurrences (`NOTIF-T07`).
+     - Added `advanceRecipientRecurrence(id, nextTrigger)` to `reminders.repository.js`.
+     - In `processDueReminders`, recurring reminders deliver the occurrence notification and automatically advance `next_trigger_at` to the next cycle while maintaining `PENDING` state.
+     - `dismissReminder` with `dismissAllOccurrences: true` permanently sets `DISMISSED`.
+4. **D. Delivery Lifecycle & Bounded Retries**:
+   - Verified delivery lifecycle states: `PENDING`, `SENT`, `DELIVERED`, `FAILED`, `RETRYING`, `CANCELLED`.
+   - Added `attempt_count` column to `notification_deliveries` table and updated repository mappings.
+   - Enforced bounded retries: transient transport failures increment `attempt_count`; after reaching 3 attempts, delivery transitions permanently to `FAILED` without infinite retries (`NOTIF-T19`, `NOTIF-T20`).
+5. **E. Background Dispatcher Boundary & Concurrency**:
+   - In `findDueReminderRecipients`, added `FOR UPDATE OF rr SKIP LOCKED` when running within a transaction boundary (`withTransaction`).
+   - Multiple concurrent sweeps skip locked rows, eliminating race conditions and duplicate dispatches without requiring generic worker fleets or Redis (`NOTIF-T09`).
+   - External network push dispatch runs safely outside the database transaction boundary.
+6. **F. Platform Claims Clarification**:
+   - Windows Desktop: Electron IPC contract (`desktop:show-notification`, `desktop:schedule-notification`) with `electron.Notification.show()`.
+   - Android Mobile: Expo/React Native service contract (`apps/mobile/src/services/notifications.js`).
+   - Platform verification accurately reflects client IPC/service contracts; native OS background alarm managers (AlarmManager / WorkManager) and system tray persistence are formally scheduled for Phase 26–28 per `docs/phase-wise-plan.md`.
+7. **G. Offline Behavior Clarification**:
+   - Local reminder contracts defined in mobile & desktop layers.
+   - Full offline SQLite replication and multi-device offline reconciliation are scheduled for Phase 26–28.
+8. **H. Shared Reminder Revocation Enforcement**:
+   - Fixed `processDueReminders` to re-evaluate active trust permission at trigger time for cross-workspace recipients.
+   - If trusted relationship has been revoked, recipient status is marked `CANCELLED` and notification generation is suppressed, preventing unauthorized notifications from leaking data (`NOTIF-T14`).
+
+---
+
+### Verification Results
+
+| Check / Requirement          | Status   | Details                                                                                           |
+| ---------------------------- | -------- | ------------------------------------------------------------------------------------------------- |
+| **Strict JavaScript-Only**   | **PASS** | `npm run check:js-only`: 0 TypeScript files across entire monorepo                                |
+| **ESLint 9 Flat Config**     | **PASS** | `npm run lint`: 0 errors, 0 warnings across all files                                             |
+| **Prettier Formatting**      | **PASS** | `npm run format:check`: All files conform to repository formatting                                |
+| **Vitest Test Suite**        | **PASS** | `npm test`: 499/499 passed across 47 test files (+41 tests added in Phase 11)                     |
+| **Playwright E2E Suite**     | **PASS** | `npx playwright test`: 43/43 passed across 7 test files (+4 E2E tests in `notifications.spec.js`) |
+| **Live Database Migrations** | **PASS** | `npm --workspace=@workaholic/backend run migrate:status`: All migrations applied cleanly          |
+| **Live PostgreSQL 16 Suite** | **PASS** | `reminders-live.test.js`: Verified single target CHECK, non-self-trust CHECK, partial indexes     |
+| **Vite Production Build**    | **PASS** | `npm run build`: Production bundle built cleanly in 2.44s                                         |
+
+- **Phase 11 Status**: **FINAL AUDIT PASSED & VERIFIED COMPLETE**
+
+---
+
+## Phase 12: Background Job Infrastructure
+
+### Overview
+
+Established a general-purpose, robust PostgreSQL-backed asynchronous background job subsystem for Workaholic conforming to `docs/phase-wise-plan.md` Section 16, `docs/6.SYSTEM-ARCHITECTURE.md` Section 35–36, and `AGENTS.md`. The infrastructure supports reliable asynchronous execution of reminders, recurrences, sync, and cleanup with atomic row claiming (`FOR UPDATE SKIP LOCKED`), exponential backoff retries, non-retryable fatal error routing to `DEAD_LETTER`, automatic recovery of stale/abandoned locks, in-process worker lifecycle with adaptive polling, and clean integration with Phase 11 reminder dispatching.
+
+### Architecture & Implementation Details
+
+1. **Job Schema & States (`1725628810000_enhance_background_jobs.sql`)**:
+   - Supported lifecycle states: `PENDING`, `PROCESSING`, `COMPLETED`, `FAILED`, `CANCELLED`, and `DEAD_LETTER`.
+   - Added `dead_letter_reason TEXT` for post-mortem diagnostics on terminal or non-retryable failures.
+   - Added `job_key VARCHAR(255)` with partial unique index `idx_background_jobs_job_key ON background_jobs (queue, job_key) WHERE status IN ('PENDING', 'PROCESSING')` for enqueue-time deduplication.
+   - Added partial index `idx_background_jobs_stale_recovery ON background_jobs (status, locked_at) WHERE status = 'PROCESSING'` for high-speed crash recovery.
+   - Added partial index `idx_background_jobs_dead_letter ON background_jobs (queue, status) WHERE status = 'DEAD_LETTER'`.
+
+2. **Atomic Row Claiming (`FOR UPDATE SKIP LOCKED`)**:
+   - `fetchNextPendingJob`: Runs inside an isolated database transaction, querying `SELECT ... FOR UPDATE SKIP LOCKED` sorted by `priority DESC, run_at ASC, id ASC LIMIT 1`.
+   - Atomically transitions claimed row to `PROCESSING`, increments `attempts = attempts + 1`, and stamps `locked_at = CURRENT_TIMESTAMP` and `locked_by = workerId`.
+   - Concurrent workers claim distinct jobs simultaneously with zero lock contention or duplicate execution.
+
+3. **Retries, Backoff & Dead-Letter Routing**:
+   - Exponential backoff calculation: `delay = Math.min(baseDelay * Math.pow(backoffFactor, attempts - 1), maxDelay)`.
+   - Bounded retries: when `attempts < maxAttempts` and failure is retryable, resets status to `PENDING` with future `run_at`.
+   - Terminal exhaustion: when `attempts >= maxAttempts`, transitions to `FAILED` with diagnostic failure reason.
+   - Non-retryable failures: when `err.nonRetryable === true` or fatal invariant violation occurs, routes immediately to `DEAD_LETTER` without wasting retry attempts.
+   - Dedicated `deadLetterJob(jobId, reason)` and `cancelJob(jobId)` primitives.
+
+4. **Crash & Abandonment Recovery (`recoverStaleJobs`)**:
+   - Atomic CTE query detects orphaned `PROCESSING` jobs where `locked_at < NOW() - staleTimeout`.
+   - If attempts are exhausted, marks as `DEAD_LETTER`.
+   - Otherwise, releases lock and reschedules to `PENDING` with a brief delay, allowing healthy workers to pick it up.
+
+5. **Worker Lifecycle & Adaptive Polling (`JobWorker`)**:
+   - Class `JobWorker` manages the asynchronous polling loop and periodic stale job recovery.
+   - Adaptive polling backoff: polls immediately when active work is processed, backing off to higher intervals (up to 3000ms) when queue is idle, eliminating database CPU thrashing.
+   - Handler isolation: uncaught errors or rejections in handlers are captured, recorded in the database, and never crash the worker loop.
+   - Graceful shutdown (`worker.stop(timeoutMs)`): stops timer loop and awaits in-flight handler execution before resolving.
+
+6. **Phase 11 Reminder Integration**:
+   - Registered `REMINDER_SWEEP` and `REMINDER_DISPATCH` handlers on `jobQueue`.
+   - `enqueueReminderSweep`: Deduplicates sweeps within a 30-second window via `jobKey`.
+   - Integrated with Fastify lifecycle: in non-test environments, starts `JobWorker` for the `notifications` queue and cleanly stops on `app.close()`.
+   - Preserves all Phase 11 domain behavior, recurrence semantics, push delivery, and recipient isolation.
+
+---
+
+### Verification Results
+
+| Check / Requirement          | Status   | Details                                                                                            |
+| ---------------------------- | -------- | -------------------------------------------------------------------------------------------------- |
+| **Strict JavaScript-Only**   | **PASS** | `npm run check:js-only`: 0 TypeScript files across entire monorepo                                 |
+| **ESLint 9 Flat Config**     | **PASS** | `npm run lint`: 0 errors, 0 warnings across all workspaces                                         |
+| **Prettier Formatting**      | **PASS** | `npm run format:check`: All files conform to repository formatting                                 |
+| **Vitest Test Suite**        | **PASS** | `npm test`: 511/511 passed across 48 test files (+12 tests added in Phase 12)                      |
+| **Playwright E2E Suite**     | **PASS** | `npx playwright test`: 43/43 passed across 7 test files                                            |
+| **Live Database Migrations** | **PASS** | `npm --workspace=@workaholic/backend run migrate:status`: All migrations applied cleanly           |
+| **Live PostgreSQL 16 Suite** | **PASS** | `queue.test.js` & `worker.test.js`: Verified SKIP LOCKED concurrency, backoff, deduplication, etc. |
+| **Vite Production Build**    | **PASS** | `npm run build`: Production bundle built cleanly in 2.64s                                          |
+
+- **Phase 12 Status**: **COMPLETE & VERIFIED**
+
+---
+
+## Phase 13: Google Calendar Integration
+
+> **Implementation & Verification Status**: **COMPLETE & VERIFIED**  
+> **Test Results**: Vitest 540/540 passing (50 test files), Playwright 44/44 passing (8 test files), JS-only 100%, ESLint 0 errors / 0 warnings, Prettier 100%, Migrations up to date.
+
+### Core Deliverables Implemented & Verified
+
+1. **Security & OAuth 2.0 Boundary (`oauth-boundary.service.js`)**:
+   - Implemented OAuth 2.0 authorization URL generator and code-token exchange boundary.
+   - Enforced HMAC-SHA256 signed OAuth state tokens with expiration (10m) and replay protection to prevent cross-tenant/cross-user CSRF hijacking.
+   - Encrypted refresh tokens and credentials at rest using AES-256-GCM (`crypto.js`) with IV and authentication tags.
+   - Credentials remain strictly server-side; zero plaintext tokens or secrets returned in API responses, logs, or client-side storage.
+   - Disconnect safely wipes credentials and transitions integration status to `DISCONNECTED` while preserving user native calendar data.
+
+2. **External Integration Schema & Migrations (`1725628811000_create_external_sync_and_mappings.sql`)**:
+   - `integrations`: Tracks user connection state (`CONNECTED`, `DISCONNECTED`, `REVOKED`), timestamps, and scopes.
+   - `external_accounts`: Stores encrypted credentials, display name, and external account IDs.
+   - `calendar_external_mappings`: Maps Workaholic native calendars to Google calendars with sync tokens and sync states.
+   - `event_external_mappings`: Maps Workaholic native events to Google event IDs (`native_resource_id`, `external_resource_id`, provider `GOOGLE`), tracking ETags and modification timestamps.
+   - `sync_history`: Logs audit trail of sync executions, counts (imported, exported, deleted, conflicts), and failure reasons.
+
+3. **Google Calendar Adapter & Event Mapper (`google-calendar.adapter.js`, `google-calendar.mapper.js`)**:
+   - Isolated integration boundary: all external Google API interactions encapsulated in `GoogleCalendarAdapter` without leaking into repositories or UI.
+   - Bidirectional event mapping:
+     - All-day event boundaries: preserves pure-date semantics (`startDate`/`endDate`) without timezone shifting or UTC conversions.
+     - Timed events: converts between ISO UTC strings and Google date-time objects with timezone metadata.
+     - Cancellation/deletion semantics: Google `cancelled` status marks native events as `CANCELLED` and mappings as `DELETED_EXTERNALLY` without deleting native rows.
+     - Recurrence series: recurring Google events map directly to Workaholic `recurrence_rules` rows, attaching `recurrenceRuleId` to the native event.
+
+4. **Two-Way Synchronization Engine (`google-calendar-sync.service.js`)**:
+   - Calendar discovery: automatically lists accessible Google calendars with `isPrimary: Boolean(gCal.primary)` metadata and creates native calendar mappings.
+   - Deterministic conflict resolution: compares modification timestamps (`nativeModified > lastNativeSync` vs `externalModified > lastExtSync`); native-originated modifications take precedence over external edits and flag mapping status as `CONFLICT`, eliminating arbitrary last-write-wins races.
+   - Write-back loop prevention: preserves last sync timestamps per boundary so outbound sync updates are not re-imported as new changes.
+   - Multi-tenant isolation: enforces `userId` and `workspaceId` checks on all operations; returns `NOT_CONNECTED` when attempting sync on unlinked integrations.
+
+5. **Phase 12 Background Queue Integration (`google-sync-dispatcher.js`)**:
+   - Registered `GOOGLE_CALENDAR_SYNC` job handler on the Phase 12 `JobQueue`.
+   - Supports asynchronous sync execution via `POST /api/v1/integrations/google/calendar/sync?async=true`, returning `jobId` and queuing the task for worker processing.
+
+6. **Web Client Integration & UI (`GoogleSyncModal.jsx`, `CalendarFilterPanel.jsx`)**:
+   - Added Google Calendar synchronization trigger to `CalendarFilterPanel.jsx`.
+   - Implemented `GoogleSyncModal.jsx` displaying connection status, discovered calendars, primary badge, manual "Sync Now" trigger with result summaries, and safe disconnect confirmation.
+   - Full Playwright E2E browser journey (TM-CAL-014) verifying disconnect -> connect -> discover calendars -> sync -> disconnect.
+
+---
+
+### Phase 13 Audit & Resolution of 7 Specific Issues
+
+| Issue       | Description                            | Fix & Verification                                                                                                                                                                                                                    |
+| ----------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Issue 1** | OAuth credentials parsing              | Updated `decryptCredentials` in `crypto.js` and `mapExternalAccountRow` in `integrations.repository.js` to seamlessly support both JSON strings, JSONB objects, and base64 strings.                                                   |
+| **Issue 2** | Calendar discovery properties          | Ensured discovered calendar representations explicitly include `isPrimary: Boolean(gCal.primary)` matching the API contract.                                                                                                          |
+| **Issue 3** | Tenant isolation / error contract      | Aligned error responses to return `NOT_CONNECTED` (`code: 'NOT_CONNECTED'`) on status 400 when an unauthenticated/unconnected user initiates calendar operations.                                                                     |
+| **Issue 4** | All-day event boundaries               | Fixed mapper to use pure date strings (`startDate`/`endDate`) for Google all-day events, preventing timezone offset day-shifting. Added timezone boundary regression test.                                                            |
+| **Issue 5** | Cancelled/deleted Google events        | When a Google event is cancelled externally, the native event status is updated to `CANCELLED` and mapping to `DELETED_EXTERNALLY` without deleting the native record.                                                                |
+| **Issue 6** | Conflict-resolution timestamp handling | Replaced arbitrary timestamp offsets with deterministic synchronization boundary tracking; native modifications prioritize native data and record `CONFLICT` without infinite write-back loops. Added comprehensive regression tests. |
+| **Issue 7** | Recurrence-series mapping              | Integrated Google recurring events with Phase 10 `recurrence_rules`; creates and links `recurrenceRuleId` to the native event representation and maintains occurrence expansion integrity.                                            |
+
+---
+
+### Verification Results
+
+| Check / Requirement                | Status   | Details                                                                                  |
+| ---------------------------------- | -------- | ---------------------------------------------------------------------------------------- |
+| **Strict JavaScript-Only**         | **PASS** | `npm run check:js-only`: 0 TypeScript files across entire monorepo                       |
+| **ESLint 9 Flat Config**           | **PASS** | `npm run lint`: 0 errors, 0 warnings across all workspaces                               |
+| **Prettier Formatting**            | **PASS** | `npm run format:check`: 100% matched files use Prettier code style                       |
+| **Google Calendar Focused Vitest** | **PASS** | `npx vitest run apps/backend/tests/google-calendar-sync.test.js`: 25/25 passed           |
+| **Full Vitest Test Suite**         | **PASS** | `npm test`: 540/540 passed across 50 test files                                          |
+| **Playwright E2E Suite**           | **PASS** | `npx playwright test`: 44/44 passed across 8 test files (including TM-CAL-014)           |
+| **Live Database Migrations**       | **PASS** | `npm --workspace=@workaholic/backend run migrate:status`: All migrations applied cleanly |
+| **Vite Production Build**          | **PASS** | `npm run build`: Production bundle built cleanly in 2.12s                                |
+| **Credential / Log Leak Audit**    | **PASS** | 0 secrets or tokens exposed in responses, storage, frontend bundles, or logs             |
+
+- **Phase 13 Status**: **COMPLETE & VERIFIED**
+- **Next Phase**: Phase 14 — Google Tasks Integration

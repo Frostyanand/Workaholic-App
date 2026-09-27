@@ -12,6 +12,12 @@ import {
   EVENT_VISIBILITY,
   RECURRENCE_FREQUENCY,
   RECURRENCE_EDIT_MODE,
+  REMINDER_TRIGGER_TYPE,
+  REMINDER_PRIORITY,
+  REMINDER_STATUS,
+  NOTIFICATION_TYPE,
+  TRUSTED_PERMISSION,
+  SYNC_DIRECTION,
 } from '../constants/index.js';
 
 export const idSchema = z.string().uuid({ message: 'Invalid UUID identifier' });
@@ -654,4 +660,153 @@ export const todayQuerySchema = z.object({
     .regex(/^\d{4}-\d{2}-\d{2}$/, 'date must be in YYYY-MM-DD format')
     .optional(),
   timezone: z.string().trim().max(100).optional(),
+});
+
+// Phase 11: Reminders Schemas
+export const createReminderSchema = z
+  .object({
+    workspaceId: z.string().uuid({ message: 'workspaceId must be a valid UUID' }).optional(),
+    taskId: z.string().uuid().nullable().optional(),
+    eventId: z.string().uuid().nullable().optional(),
+    bookingId: z.string().uuid().nullable().optional(),
+    triggerType: z.nativeEnum(REMINDER_TRIGGER_TYPE),
+    triggerAt: z
+      .string()
+      .datetime({ message: 'triggerAt must be a valid ISO 8601 string' })
+      .nullable()
+      .optional(),
+    relativeOffset: z.string().nullable().optional(),
+    priority: z.nativeEnum(REMINDER_PRIORITY).default(REMINDER_PRIORITY.NORMAL),
+    recipientUserIds: z.array(z.string().uuid()).optional(),
+    title: z.string().max(255).optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.triggerType === REMINDER_TRIGGER_TYPE.ABSOLUTE_TIME && !data.triggerAt) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'triggerAt is required for ABSOLUTE_TIME reminders',
+        path: ['triggerAt'],
+      });
+    }
+    if (
+      (data.triggerType === REMINDER_TRIGGER_TYPE.BEFORE_EVENT ||
+        data.triggerType === REMINDER_TRIGGER_TYPE.BEFORE_DEADLINE) &&
+      !data.relativeOffset
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'relativeOffset is required for relative reminders',
+        path: ['relativeOffset'],
+      });
+    }
+  });
+
+export const updateReminderSchema = z.object({
+  triggerType: z.nativeEnum(REMINDER_TRIGGER_TYPE).optional(),
+  triggerAt: z
+    .string()
+    .datetime({ message: 'triggerAt must be a valid ISO 8601 string' })
+    .nullable()
+    .optional(),
+  relativeOffset: z.string().nullable().optional(),
+  priority: z.nativeEnum(REMINDER_PRIORITY).optional(),
+  status: z.nativeEnum(REMINDER_STATUS).optional(),
+});
+
+export const snoozeReminderSchema = z
+  .object({
+    durationMinutes: z.coerce.number().int().positive().optional(),
+    snoozeUntil: z
+      .string()
+      .datetime({ message: 'snoozeUntil must be a valid ISO 8601 string' })
+      .optional(),
+  })
+  .refine(data => data.durationMinutes !== undefined || data.snoozeUntil !== undefined, {
+    message: 'Either durationMinutes or snoozeUntil must be provided',
+  });
+
+export const dismissReminderSchema = z.object({
+  dismissAllOccurrences: z.boolean().default(false).optional(),
+});
+
+export const addRecipientSchema = z.object({
+  userId: z.string().uuid({ message: 'userId must be a valid UUID' }),
+});
+
+export const listRemindersQuerySchema = z.object({
+  taskId: z.string().uuid().optional(),
+  eventId: z.string().uuid().optional(),
+  status: z.string().optional(),
+  limit: z.coerce.number().int().positive().max(100).default(50),
+  cursor: z.string().optional(),
+});
+
+// Phase 11: Notifications Schemas
+export const listNotificationsQuerySchema = z.object({
+  type: z.nativeEnum(NOTIFICATION_TYPE).optional(),
+  unreadOnly: z
+    .union([z.boolean(), z.enum(['true', 'false'])])
+    .transform(v => v === true || v === 'true')
+    .optional(),
+  limit: z.coerce.number().int().positive().max(100).default(50),
+  cursor: z.string().optional(),
+});
+
+export const updateNotificationSchema = z.object({
+  read: z.boolean().optional(),
+  dismissed: z.boolean().optional(),
+});
+
+export const notificationPreferencesSchema = z.object({
+  channels: z
+    .object({
+      inApp: z.boolean().optional(),
+      push: z.boolean().optional(),
+      windowsDesktop: z.boolean().optional(),
+      androidLocal: z.boolean().optional(),
+    })
+    .optional(),
+  quietHours: z
+    .object({
+      enabled: z.boolean().default(false),
+      start: z
+        .string()
+        .regex(/^\d{2}:\d{2}$/, 'start must be HH:MM format')
+        .default('22:00'),
+      end: z
+        .string()
+        .regex(/^\d{2}:\d{2}$/, 'end must be HH:MM format')
+        .default('07:00'),
+      allowCritical: z.boolean().default(true),
+    })
+    .optional(),
+});
+
+export const registerPushTokenSchema = z.object({
+  platform: z.enum(['WEB', 'WINDOWS', 'ANDROID']),
+  token: z.string().min(1, 'Token cannot be empty').max(4096),
+  deviceName: z.string().max(255).optional(),
+  deviceId: z.string().uuid().optional(),
+});
+
+export const createTrustedRelationshipSchema = z.object({
+  trustedUserId: z.string().uuid({ message: 'trustedUserId must be a valid UUID' }),
+  permissions: z.array(z.string()).default([TRUSTED_PERMISSION.RECEIVE_REMINDERS]),
+});
+
+export const googleConnectSchema = z.object({
+  redirectUri: z.string().url('Invalid redirect URI').optional(),
+});
+
+export const googleCallbackSchema = z.object({
+  code: z.string().min(1, 'Authorization code is required'),
+  state: z.string().min(1, 'State parameter is required'),
+  service: z.enum(['CALENDAR', 'TASKS', 'DRIVE']).default('CALENDAR'),
+});
+
+export const googleSyncOptionsSchema = z.object({
+  calendarId: z.string().optional(),
+  calendarMappingId: z.string().uuid().optional(),
+  direction: z.nativeEnum(SYNC_DIRECTION).default(SYNC_DIRECTION.BIDIRECTIONAL),
+  force: z.boolean().default(false),
 });

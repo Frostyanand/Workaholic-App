@@ -6,12 +6,19 @@ import { formatRRuleString } from './recurrence.engine.js';
  */
 export function mapRecurrenceRuleRow(row) {
   if (!row) return null;
+  const dayNames = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
+  const byweekday = Array.isArray(row.by_weekday)
+    ? row.by_weekday.map(n => (typeof n === 'number' ? dayNames[n] : String(n).toUpperCase()))
+    : null;
+
   return {
     id: row.id,
     workspaceId: row.workspace_id,
     frequency: row.frequency,
+    freq: row.frequency,
     interval: row.interval,
     byWeekday: row.by_weekday,
+    byweekday,
     byMonthDay: row.by_month_day,
     byMonth: row.by_month,
     bySetPos: row.by_set_pos,

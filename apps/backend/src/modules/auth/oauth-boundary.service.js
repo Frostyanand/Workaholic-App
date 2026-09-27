@@ -152,10 +152,17 @@ export class OAuthBoundaryService {
     }
 
     // Encrypt long-lived refresh token
-    const encryptedCredentials = encryptCredentials({
+    const base64Enc = encryptCredentials({
       accessToken: tokenData.accessToken,
       refreshToken: tokenData.refreshToken,
     });
+    const parsedBundle = JSON.parse(Buffer.from(base64Enc, 'base64').toString('utf8'));
+    const encryptedCredentials = {
+      encrypted: parsedBundle.ciphertext,
+      ciphertext: parsedBundle.ciphertext,
+      iv: parsedBundle.iv,
+      authTag: parsedBundle.authTag,
+    };
 
     // Save integration record
     const integration = await this.integrationsRepo.upsertIntegration(
@@ -237,7 +244,7 @@ export class OAuthBoundaryService {
    */
   async getIntegrationStatus(userId, client = undefined) {
     const integration = await this.integrationsRepo.findIntegration(userId, 'GOOGLE', client);
-    if (!integration || integration.status !== 'CONNECTED') {
+    if (!integration || (integration.status !== 'CONNECTED' && integration.status !== 'SYNCING')) {
       return {
         connected: false,
         status: integration?.status || 'DISCONNECTED',
@@ -266,7 +273,7 @@ export class OAuthBoundaryService {
    */
   async getInternalCredentials(userId, client = undefined) {
     const integration = await this.integrationsRepo.findIntegration(userId, 'GOOGLE', client);
-    if (!integration || integration.status !== 'CONNECTED') {
+    if (!integration || (integration.status !== 'CONNECTED' && integration.status !== 'SYNCING')) {
       return null;
     }
     const account = await this.integrationsRepo.findExternalAccount(

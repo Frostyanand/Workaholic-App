@@ -16,6 +16,14 @@ import { boardsRoutes, columnsRoutes } from './modules/boards/boards.routes.js';
 import { calendarRoutes } from './modules/calendar/calendar.routes.js';
 import { todayRoutes } from './modules/today/today.routes.js';
 import { notesRoutes } from './modules/notes/notes.routes.js';
+import { remindersRoutes } from './modules/reminders/reminders.routes.js';
+import {
+  notificationsRoutes,
+  notificationPreferencesRoutes,
+} from './modules/notifications/notifications.routes.js';
+import { devicesRoutes } from './modules/devices/devices.routes.js';
+import { integrationsRoutes } from './modules/integrations/integrations.routes.js';
+import { startReminderDispatcher } from './modules/notifications/reminder-dispatcher.js';
 
 export function createApp(opts = {}) {
   const app = Fastify({
@@ -114,6 +122,15 @@ export function createApp(opts = {}) {
   app.register(calendarRoutes, { prefix: '/api/v1' });
   app.register(todayRoutes, { prefix: '/api/v1/today' });
   app.register(notesRoutes, { prefix: '/api/v1/notes' });
+  app.register(remindersRoutes, { prefix: '/api/v1/reminders' });
+  app.register(notificationsRoutes, { prefix: '/api/v1/notifications' });
+  app.register(notificationPreferencesRoutes, { prefix: '/api/v1/notification-preferences' });
+  app.register(notificationPreferencesRoutes, { prefix: '/api/v1/notifications/preferences' });
+  app.register(devicesRoutes, { prefix: '/api/v1/devices' });
+  app.register(integrationsRoutes, { prefix: '/api/v1/integrations' });
+
+  // Start in-process reminder dispatcher for Phase 11
+  startReminderDispatcher(app);
 
   return app;
 }

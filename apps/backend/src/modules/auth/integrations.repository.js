@@ -22,6 +22,14 @@ export function mapIntegrationRow(row) {
  */
 export function mapExternalAccountRow(row) {
   if (!row) return null;
+  let creds = row.encrypted_credentials;
+  if (typeof creds === 'string') {
+    try {
+      creds = JSON.parse(creds);
+    } catch {
+      // Retain original string if not JSON
+    }
+  }
   return {
     id: row.id,
     integrationId: row.integration_id,
@@ -29,7 +37,7 @@ export function mapExternalAccountRow(row) {
     externalAccountId: row.external_account_id,
     displayName: row.display_name,
     scopes: row.scopes || [],
-    encryptedCredentials: row.encrypted_credentials,
+    encryptedCredentials: creds,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -189,6 +197,30 @@ export async function upsertExternalAccount(data, client = pool) {
   );
 
   return mapExternalAccountRow(result.rows[0]);
+}
+
+/**
+ * Update status of an integration
+ *
+ * @param {string} id
+ * @param {string} status
+ * @param {import('pg').Pool | import('pg').PoolClient} [client=pool]
+ */
+export async function updateIntegrationStatus(id, status, client = pool) {
+  if (!id || !status) {
+    throw new TypeError('id and status are required');
+  }
+
+  const sql = `
+    UPDATE integrations
+    SET status = $2,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = $1
+    RETURNING id, user_id, provider, status, connected_at, disconnected_at, created_at, updated_at
+  `;
+
+  const result = await query(sql, [id, status], client);
+  return mapIntegrationRow(result.rows[0]);
 }
 
 /**

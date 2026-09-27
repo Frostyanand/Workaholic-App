@@ -6,12 +6,16 @@ import {
   completeJob,
   failJob,
   findJobById,
+  findJobs,
+  cancelJob,
+  deadLetterJob,
+  recoverStaleJobs,
   getQueueMetrics,
 } from '../src/core/jobs.repository.js';
-import { pool, withTransaction } from '../src/core/db.js';
+import { pool, withTransaction, query } from '../src/core/db.js';
 import { JOB_STATUS } from '@workaholic/shared';
 
-describe('Background Job Foundation (Task 3.6)', () => {
+describe('Background Job Foundation (Task 3.6 & Phase 12)', () => {
   describe('JobQueue Unit Tests', () => {
     let mockRepo;
     let queue;
@@ -28,13 +32,19 @@ describe('Background Job Foundation (Task 3.6)', () => {
           lockedBy: workerId,
         }),
         completeJob: async id => ({ id, status: 'COMPLETED' }),
-        failJob: async (id, err) => ({ id, status: 'PENDING', lastError: err }),
+        failJob: async (id, err, delay, isDeadLetter) => ({
+          id,
+          status: isDeadLetter ? 'DEAD_LETTER' : 'PENDING',
+          lastError: err,
+        }),
         getQueueMetrics: async () => ({
           queue: 'default',
           PENDING: 1,
           PROCESSING: 0,
           COMPLETED: 0,
           FAILED: 0,
+          CANCELLED: 0,
+          DEAD_LETTER: 0,
           total: 1,
         }),
       };
@@ -84,6 +94,27 @@ describe('Background Job Foundation (Task 3.6)', () => {
       const metrics = await queue.getMetrics('default');
       expect(metrics.total).toBe(1);
       expect(metrics.PENDING).toBe(1);
+    });
+
+    it('calculates exponential backoff delay correctly', () => {
+      expect(queue.calculateBackoff(1, 10, 3600, 2)).toBe(10);
+      expect(queue.calculateBackoff(2, 10, 3600, 2)).toBe(20);
+      expect(queue.calculateBackoff(3, 10, 3600, 2)).toBe(40);
+      expect(queue.calculateBackoff(4, 10, 3600, 2)).toBe(80);
+      // Caps at maxDelay
+      expect(queue.calculateBackoff(10, 10, 100, 2)).toBe(100);
+    });
+
+    it('identifies non-retryable errors and marks job as DEAD_LETTER', async () => {
+      queue.registerHandler('TEST_TASK', async () => {
+        const err = new Error('Unrecoverable schema validation error');
+        err.nonRetryable = true;
+        throw err;
+      });
+
+      const result = await queue.processNext('default');
+      expect(result.processed).toBe(true);
+      expect(result.status).toBe('DEAD_LETTER');
     });
   });
 
@@ -209,6 +240,111 @@ describe('Background Job Foundation (Task 3.6)', () => {
 
       const metrics = await getQueueMetrics(testQueue);
       expect(metrics.FAILED).toBe(1);
+    });
+
+    it('transitions job to DEAD_LETTER on non-retryable failure or explicit dead-lettering', async () => {
+      const job = await enqueueJob({
+        queue: testQueue,
+        jobType: 'CORRUPT_PAYLOAD',
+        maxAttempts: 5,
+      });
+
+      const deadLettered = await deadLetterJob(job.id, 'Payload malformed and cannot be processed');
+      expect(deadLettered.status).toBe(JOB_STATUS.DEAD_LETTER);
+      expect(deadLettered.deadLetterReason).toBe('Payload malformed and cannot be processed');
+
+      const metrics = await getQueueMetrics(testQueue);
+      expect(metrics.DEAD_LETTER).toBe(1);
+    });
+
+    it('deduplicates enqueued jobs when jobKey matches an active pending/processing job', async () => {
+      const job1 = await enqueueJob({
+        queue: testQueue,
+        jobType: 'CALENDAR_SYNC',
+        payload: { userId: 'usr_123' },
+        jobKey: 'sync_usr_123',
+      });
+
+      const job2 = await enqueueJob({
+        queue: testQueue,
+        jobType: 'CALENDAR_SYNC',
+        payload: { userId: 'usr_123' },
+        jobKey: 'sync_usr_123', // Same active key
+      });
+
+      expect(job1.id).toBe(job2.id); // Re-used existing active job
+      const metrics = await getQueueMetrics(testQueue);
+      expect(metrics.total).toBe(1);
+    });
+
+    it('cancels pending and processing jobs cleanly', async () => {
+      const job = await enqueueJob({
+        queue: testQueue,
+        jobType: 'FUTURE_REPORT',
+      });
+
+      const cancelled = await cancelJob(job.id);
+      expect(cancelled.status).toBe(JOB_STATUS.CANCELLED);
+
+      const metrics = await getQueueMetrics(testQueue);
+      expect(metrics.CANCELLED).toBe(1);
+      expect(metrics.PENDING).toBe(0);
+    });
+
+    it('recovers stale processing jobs left by crashed workers', async () => {
+      const job1 = await enqueueJob({
+        queue: testQueue,
+        jobType: 'CRASHED_JOB_1',
+        maxAttempts: 3,
+      });
+
+      const job2 = await enqueueJob({
+        queue: testQueue,
+        jobType: 'CRASHED_JOB_2',
+        maxAttempts: 1, // Will exhaust on recovery
+      });
+
+      // Manually set both to PROCESSING with old locked_at (10 minutes ago)
+      const tenMinutesAgo = new Date(Date.now() - 600000).toISOString();
+      await query(
+        `UPDATE background_jobs
+         SET status = 'PROCESSING', locked_at = $2, locked_by = 'crashed_worker', attempts = 1
+         WHERE id = $1`,
+        [job1.id, tenMinutesAgo],
+      );
+      await query(
+        `UPDATE background_jobs
+         SET status = 'PROCESSING', locked_at = $2, locked_by = 'crashed_worker', attempts = 1
+         WHERE id = $1`,
+        [job2.id, tenMinutesAgo],
+      );
+
+      // Run stale recovery for jobs locked > 300 seconds ago
+      const recovered = await recoverStaleJobs(300, 10);
+      expect(recovered.length).toBe(2);
+
+      // Job 1 had attempts (1) < maxAttempts (3) -> recovered to PENDING
+      const updatedJob1 = await findJobById(job1.id);
+      expect(updatedJob1.status).toBe(JOB_STATUS.PENDING);
+      expect(updatedJob1.lockedBy).toBeNull();
+      expect(updatedJob1.lastError).toContain('Recovered from stale PROCESSING lock');
+
+      // Job 2 had attempts (1) >= maxAttempts (1) -> recovered to DEAD_LETTER
+      const updatedJob2 = await findJobById(job2.id);
+      expect(updatedJob2.status).toBe(JOB_STATUS.DEAD_LETTER);
+      expect(updatedJob2.deadLetterReason).toContain('Stale lock timed out');
+    });
+
+    it('queries jobs with filtering for observability', async () => {
+      await enqueueJob({ queue: testQueue, jobType: 'QUERY_TYPE_A' });
+      await enqueueJob({ queue: testQueue, jobType: 'QUERY_TYPE_B' });
+
+      const foundA = await findJobs({ queue: testQueue, jobType: 'QUERY_TYPE_A' });
+      expect(foundA.length).toBe(1);
+      expect(foundA[0].jobType).toBe('QUERY_TYPE_A');
+
+      const all = await findJobs({ queue: testQueue, limit: 10 });
+      expect(all.length).toBe(2);
     });
   });
 });

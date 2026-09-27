@@ -23,6 +23,7 @@ export default defineConfig({
     environment: 'node',
     include: ['**/*.test.{js,jsx}'],
     exclude: ['**/node_modules/**', '**/dist/**', '**/.vite/**'],
+    fileParallelism: false,
     fakeTimers: {
       toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'],
     },

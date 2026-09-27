@@ -9,6 +9,7 @@ import * as columnsRepo from '../boards/columns.repository.js';
 import * as recurrenceRepo from '../recurrence/recurrence.repository.js';
 import * as taskOccurrencesRepo from './task_occurrences.repository.js';
 import { expandOccurrences } from '../recurrence/recurrence.engine.js';
+import { remindersService } from '../reminders/reminders.service.js';
 import { NotFoundError, ValidationError, ConflictError } from '../../core/errors.js';
 
 /**
@@ -394,6 +395,21 @@ export class TasksService {
       throw new ConflictError('Task was modified concurrently. Please reload.');
     }
 
+    if (payload.status === 'COMPLETED' || payload.status === 'CANCELLED') {
+      try {
+        await remindersService.onTaskCompleted(taskId);
+      } catch {
+        // reminders notification hook error should not block task update
+      }
+    }
+    if (payload.dueAt !== undefined && payload.dueAt !== current.dueAt) {
+      try {
+        await remindersService.onTaskRescheduled(taskId, payload.dueAt);
+      } catch {
+        // reminders notification hook error should not block task update
+      }
+    }
+
     return {
       ...updated,
       isOverdue: isTaskOverdue(updated),
@@ -491,6 +507,12 @@ export class TasksService {
 
     if (!updated) {
       throw new ConflictError('Task was modified concurrently. Please reload.');
+    }
+
+    try {
+      await remindersService.onTaskCompleted(taskId);
+    } catch {
+      // reminders notification hook error should not block task completion
     }
 
     return {

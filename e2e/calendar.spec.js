@@ -487,4 +487,130 @@ test.describe('Calendar E2E Journeys', () => {
     await workCheckbox.check();
     await expect(page.locator('text=Quarterly Planning Day').first()).toBeVisible();
   });
+
+  // ==========================================================
+  // TM-CAL-014: Google Calendar Sync Modal browser journey
+  // ==========================================================
+  test('TM-CAL-014 (E2E): Google Calendar connection, sync, and disconnect journey', async ({
+    page,
+  }) => {
+    page.on('dialog', dialog => dialog.accept());
+    let integrationConnected = false;
+    let syncState = 'DISCONNECTED';
+
+    await page.route('**/api/v1/integrations/google/calendar/status', async route => {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          data: {
+            connected: integrationConnected,
+            status: syncState,
+            connectedAt: integrationConnected ? new Date().toISOString() : null,
+            scopes: integrationConnected ? ['https://www.googleapis.com/auth/calendar.events'] : [],
+            accountDisplayName: integrationConnected ? 'user@gmail.com' : null,
+          },
+        }),
+      });
+    });
+
+    await page.route('**/api/v1/integrations/google/calendar/connect', async route => {
+      integrationConnected = true;
+      syncState = 'CONNECTED';
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          data: {
+            authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth?mock=1',
+            state: 'mock_state_123',
+            service: 'CALENDAR',
+          },
+        }),
+      });
+    });
+
+    await page.route('**/api/v1/integrations/google/calendar/calendars**', async route => {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          data: [
+            {
+              mappingId: 'map-gcal-1',
+              calendarId: 'cal-gcal-1',
+              nativeCalendarId: 'cal-gcal-1',
+              googleCalendarId: 'primary',
+              name: 'Google Primary Calendar',
+              color: '#4285F4',
+              primary: true,
+              isPrimary: true,
+              syncState: 'SYNCED',
+            },
+          ],
+        }),
+      });
+    });
+
+    await page.route('**/api/v1/integrations/google/calendar/sync', async route => {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          data: {
+            status: 'SUCCESS',
+            imported: 3,
+            exported: 1,
+            deleted: 0,
+            syncedAt: new Date().toISOString(),
+          },
+        }),
+      });
+    });
+
+    await page.route('**/api/v1/integrations/google/calendar/disconnect', async route => {
+      integrationConnected = false;
+      syncState = 'DISCONNECTED';
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          data: { disconnected: true },
+        }),
+      });
+    });
+
+    await page.goto('/calendar');
+
+    // 1. Open Google Calendar Sync Modal
+    const syncBtn = page.locator('button:has-text("Google Sync")');
+    await expect(syncBtn).toBeVisible();
+    await syncBtn.click();
+
+    // Verify modal is open and shows disconnected state
+    const modal = page.locator('div[role="dialog"]');
+    await expect(modal).toBeVisible();
+    await expect(modal.locator('text=Connect Google Calendar')).toBeVisible();
+
+    // 2. Connect
+    const connectBtn = modal.locator('button:has-text("Connect Google Calendar")');
+    await connectBtn.click();
+
+    // 3. Verify connected state and discovered calendars
+    await expect(modal.locator('text=Connected as')).toBeVisible();
+    await expect(modal.locator('text=Google Primary Calendar')).toBeVisible();
+
+    // 4. Trigger Sync
+    const syncNowBtn = modal.locator('button:has-text("Sync Now")');
+    await expect(syncNowBtn).toBeVisible();
+    await syncNowBtn.click();
+    await expect(modal.locator('text=Sync completed successfully')).toBeVisible();
+
+    // 5. Disconnect
+    const disconnectBtn = modal.locator('button:has-text("Disconnect")');
+    await disconnectBtn.click();
+
+    // Modal returns to disconnected state
+    await expect(modal.locator('text=Connect Google Calendar')).toBeVisible();
+  });
 });

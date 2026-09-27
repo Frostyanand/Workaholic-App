@@ -78,15 +78,39 @@ export function encryptCredentials(data, customKey) {
  * @param {string} [customKey] - Optional override key
  * @returns {any} Decrypted string or parsed object
  */
-export function decryptCredentials(base64Payload, customKey) {
-  if (!base64Payload || typeof base64Payload !== 'string') {
-    throw new TypeError('Encrypted payload must be a string');
+export function decryptCredentials(payload, customKey) {
+  if (!payload) {
+    throw new TypeError('Encrypted payload is required');
+  }
+
+  let decoded;
+  if (typeof payload === 'object' && payload !== null) {
+    decoded = payload;
+  } else if (typeof payload === 'string') {
+    try {
+      const parsed = JSON.parse(payload);
+      if (typeof parsed === 'object' && parsed !== null) {
+        decoded = parsed;
+      }
+    } catch {
+      // Not JSON string, proceed with base64 decode
+    }
+    if (!decoded) {
+      decoded = JSON.parse(Buffer.from(payload, 'base64').toString('utf8'));
+    }
+  } else {
+    throw new TypeError('Encrypted payload must be a string or object');
+  }
+
+  const iv = decoded.iv;
+  const authTag = decoded.authTag;
+  const ciphertext = decoded.ciphertext || decoded.encrypted;
+
+  if (!iv || !authTag || !ciphertext) {
+    throw new Error('Invalid encrypted payload bundle: missing iv, authTag, or ciphertext');
   }
 
   const key = getEncryptionKey(customKey);
-  const decoded = JSON.parse(Buffer.from(base64Payload, 'base64').toString('utf8'));
-  const { iv, authTag, ciphertext } = decoded;
-
   const decipher = createDecipheriv(ALGORITHM, key, Buffer.from(iv, 'hex'));
   decipher.setAuthTag(Buffer.from(authTag, 'hex'));
 

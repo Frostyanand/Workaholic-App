@@ -9,6 +9,7 @@ import { AgendaView } from '../components/calendar/AgendaView.jsx';
 import { CreateEventModal } from '../components/calendar/CreateEventModal.jsx';
 import { EventDetailModal } from '../components/calendar/EventDetailModal.jsx';
 import { CreateCalendarModal } from '../components/calendar/CreateCalendarModal.jsx';
+import { GoogleSyncModal } from '../components/calendar/GoogleSyncModal.jsx';
 import { LoadingSpinner } from '../components/common/LoadingSpinner.jsx';
 import { ErrorBanner } from '../components/common/ErrorBanner.jsx';
 import {
@@ -45,6 +46,7 @@ export function CalendarPage() {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [isCreateCalendarModalOpen, setIsCreateCalendarModalOpen] = useState(false);
+  const [isGoogleSyncModalOpen, setIsGoogleSyncModalOpen] = useState(false);
   const [isFilterOpen, setIsFilterOpen] = useState(true);
 
   const [selectedEvent, setSelectedEvent] = useState(null);
@@ -290,6 +292,7 @@ export function CalendarPage() {
             includeTasks={includeTasks}
             onToggleTasks={setIncludeTasks}
             onCreateCalendar={() => setIsCreateCalendarModalOpen(true)}
+            onOpenGoogleSync={() => setIsGoogleSyncModalOpen(true)}
           />
         )}
 
@@ -407,6 +410,16 @@ export function CalendarPage() {
         isOpen={isCreateCalendarModalOpen}
         onClose={() => setIsCreateCalendarModalOpen(false)}
         onSubmit={handleCreateCalendarSubmit}
+      />
+
+      <GoogleSyncModal
+        isOpen={isGoogleSyncModalOpen}
+        onClose={() => setIsGoogleSyncModalOpen(false)}
+        workspaceId={workspaceId}
+        onSyncComplete={() => {
+          loadCalendars();
+          loadEvents();
+        }}
       />
     </div>
   );

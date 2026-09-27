@@ -155,6 +155,30 @@ export async function findWorkspaceMemberships(workspaceId, client = pool) {
   return result.rows.map(mapMembershipRow);
 }
 
+export async function findMembership(workspaceId, userId, client = pool) {
+  if (!workspaceId || !userId) return null;
+  const sql = `
+    SELECT
+      wm.id,
+      wm.workspace_id,
+      wm.user_id,
+      wm.role,
+      wm.status,
+      wm.joined_at,
+      wm.created_at,
+      wm.updated_at,
+      u.display_name,
+      u.email
+    FROM workspace_memberships wm
+    JOIN users u ON u.id = wm.user_id
+    WHERE wm.workspace_id = $1 AND wm.user_id = $2
+      AND u.deleted_at IS NULL;
+  `;
+  const result = await query(sql, [workspaceId, userId], client);
+  if (result.rows.length === 0) return null;
+  return mapMembershipRow(result.rows[0]);
+}
+
 /**
  * Add a member to a workspace
  * @param {object} membershipData

@@ -9,6 +9,8 @@ const ALLOWED_INVOKE_CHANNELS = [
   'desktop:window-minimize',
   'desktop:window-maximize',
   'desktop:window-close',
+  'desktop:show-notification',
+  'desktop:schedule-notification',
 ];
 
 /**
@@ -34,6 +36,8 @@ function setupDesktopBridge(bridge = contextBridge, renderer = ipcRenderer) {
     minimizeWindow: () => renderer.invoke('desktop:window-minimize'),
     maximizeWindow: () => renderer.invoke('desktop:window-maximize'),
     closeWindow: () => renderer.invoke('desktop:window-close'),
+    showNotification: options => renderer.invoke('desktop:show-notification', options),
+    scheduleNotification: options => renderer.invoke('desktop:schedule-notification', options),
   };
 
   bridge.exposeInMainWorld('workaholicDesktop', api);

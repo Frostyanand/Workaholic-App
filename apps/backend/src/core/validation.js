@@ -80,3 +80,15 @@ export function validateRequest(schemas = {}) {
     };
   };
 }
+
+export function validateBody(bodySchema) {
+  return validateRequest({ body: bodySchema });
+}
+
+export function validateParams(paramsSchema) {
+  return validateRequest({ params: paramsSchema });
+}
+
+export function validateQuery(querySchema) {
+  return validateRequest({ query: querySchema });
+}

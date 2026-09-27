@@ -11,6 +11,7 @@ import * as calendarsRepo from './calendars.repository.js';
 import * as eventsRepo from './events.repository.js';
 import * as recurrenceRepo from '../recurrence/recurrence.repository.js';
 import * as recurrenceService from '../recurrence/recurrence.service.js';
+import { remindersService } from '../reminders/reminders.service.js';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -459,6 +460,14 @@ export const calendarService = {
       return eventsRepo.findEventById(eventId, workspaceId, client);
     });
 
+    if (patch.startAt && patch.startAt !== existing.startAt) {
+      try {
+        await remindersService.onEventRescheduled(eventId, patch.startAt);
+      } catch {
+        // reminders notification hook error should not block event reschedule
+      }
+    }
+
     return {
       ...updatedEvent,
       ...(conflicts.length > 0 ? { conflicts } : {}),
@@ -473,7 +482,13 @@ export const calendarService = {
     if (!existing) {
       throw new NotFoundError(`Event ${eventId} not found`);
     }
-    return eventsRepo.softDeleteEvent(eventId, workspaceId);
+    const result = await eventsRepo.softDeleteEvent(eventId, workspaceId);
+    try {
+      await remindersService.onEventCancelled(eventId);
+    } catch {
+      // reminders notification hook error should not block event delete
+    }
+    return result;
   },
 
   /**

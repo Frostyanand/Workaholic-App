@@ -13,6 +13,8 @@ const ALLOWED_INVOKE_CHANNELS = [
   'desktop:window-minimize',
   'desktop:window-maximize',
   'desktop:window-close',
+  'desktop:show-notification',
+  'desktop:schedule-notification',
 ];
 
 /**
@@ -78,6 +80,31 @@ function registerIpcHandlers(ipc = ipcMain) {
       return true;
     }
     return false;
+  });
+
+  ipc.handle('desktop:show-notification', async (_event, options = {}) => {
+    const { title = 'Workaholic', body = '' } = options;
+    if (electron.Notification && electron.Notification.isSupported()) {
+      new electron.Notification({ title, body }).show();
+      return true;
+    }
+    return false;
+  });
+
+  ipc.handle('desktop:schedule-notification', async (_event, options = {}) => {
+    const { title = 'Workaholic', body = '', delayMs = 0 } = options;
+    if (delayMs <= 0) {
+      if (electron.Notification && electron.Notification.isSupported()) {
+        new electron.Notification({ title, body }).show();
+      }
+      return { scheduled: true };
+    }
+    setTimeout(() => {
+      if (electron.Notification && electron.Notification.isSupported()) {
+        new electron.Notification({ title, body }).show();
+      }
+    }, delayMs);
+    return { scheduled: true };
   });
 }
 
