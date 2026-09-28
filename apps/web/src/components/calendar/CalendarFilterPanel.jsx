@@ -13,6 +13,8 @@ export function CalendarFilterPanel({
   onToggleTasks,
   onCreateCalendar,
   onOpenGoogleSync,
+  onShareCalendar,
+  onOpenPublicShare,
 }) {
   return (
     <div
@@ -132,10 +134,38 @@ export function CalendarFilterPanel({
                   }}
                 />
                 <span
-                  style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                  style={{
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    flex: 1,
+                  }}
                 >
                   {cal.name}
                 </span>
+                {onShareCalendar && (
+                  <button
+                    type="button"
+                    onClick={e => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      onShareCalendar(cal);
+                    }}
+                    title="Share calendar public link"
+                    aria-label={`Share ${cal.name}`}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      cursor: 'pointer',
+                      fontSize: '0.875rem',
+                      color: 'var(--text-muted)',
+                      padding: '2px 4px',
+                      borderRadius: '4px',
+                    }}
+                  >
+                    🔗
+                  </button>
+                )}
               </label>
             );
           })}
@@ -241,6 +271,27 @@ export function CalendarFilterPanel({
           >
             <span>📅</span>
             <span>Google Sync</span>
+          </Button>
+        </div>
+      )}
+
+      {/* 4. Public Calendar Sharing Section */}
+      {onOpenPublicShare && (
+        <div style={{ paddingTop: 'var(--space-xs)' }}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onOpenPublicShare}
+            style={{
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px',
+            }}
+          >
+            <span>🔗</span>
+            <span>Share Links</span>
           </Button>
         </div>
       )}

@@ -8,6 +8,8 @@ import App from '../src/App.jsx';
 import { ErrorBoundary } from '../src/components/common/ErrorBoundary.jsx';
 import { LoadingSpinner } from '../src/components/common/LoadingSpinner.jsx';
 
+// ─── API Service Mocks (prevent real fetch calls in JSDOM) ───────────────────
+
 vi.mock('../src/services/calendar.api.js', () => ({
   fetchCalendars: vi
     .fn()
@@ -24,6 +26,86 @@ vi.mock('../src/services/calendar.api.js', () => ({
   createEvent: vi.fn(),
   updateEvent: vi.fn(),
   deleteEvent: vi.fn(),
+}));
+
+vi.mock('../src/services/today.api.js', () => ({
+  fetchTodaySummary: vi.fn().mockResolvedValue({ tasks: [], events: [], deadlines: [] }),
+}));
+
+vi.mock('../src/services/tasks.api.js', () => ({
+  fetchTasks: vi.fn().mockResolvedValue([]),
+  fetchTaskById: vi.fn().mockResolvedValue(null),
+  createTask: vi.fn().mockResolvedValue({}),
+  updateTask: vi.fn().mockResolvedValue({}),
+  deleteTask: vi.fn().mockResolvedValue({}),
+  fetchTaskDependencies: vi.fn().mockResolvedValue([]),
+  addTaskDependency: vi.fn().mockResolvedValue({}),
+  removeTaskDependency: vi.fn().mockResolvedValue({}),
+  fetchRecurringTasks: vi.fn().mockResolvedValue([]),
+}));
+
+vi.mock('../src/services/projects.api.js', () => ({
+  fetchProjects: vi.fn().mockResolvedValue([]),
+  createProject: vi.fn(),
+  updateProject: vi.fn(),
+  deleteProject: vi.fn(),
+}));
+
+vi.mock('../src/services/boards.api.js', () => ({
+  fetchBoards: vi.fn().mockResolvedValue([]),
+  createBoard: vi.fn(),
+  updateBoard: vi.fn(),
+  deleteBoard: vi.fn(),
+}));
+
+vi.mock('../src/services/notes.api.js', () => ({
+  fetchNotes: vi.fn().mockResolvedValue({ notes: [], pagination: { total: 0 } }),
+  createNote: vi.fn(),
+}));
+
+vi.mock('../src/services/academic.api.js', () => ({
+  fetchSemesters: vi.fn().mockResolvedValue([]),
+  fetchAcademicDates: vi.fn().mockResolvedValue([]),
+  fetchClassSchedules: vi.fn().mockResolvedValue([]),
+}));
+
+vi.mock('../src/services/booking.api.js', () => ({
+  fetchBookingPages: vi.fn().mockResolvedValue([]),
+  createBookingPage: vi.fn(),
+}));
+
+vi.mock('../src/services/collaboration.api.js', () => ({
+  fetchTrustedRelationships: vi.fn().mockResolvedValue([]),
+  fetchActivityFeed: vi.fn().mockResolvedValue({ entries: [] }),
+  fetchEligibleCollaborators: vi.fn().mockResolvedValue([]),
+}));
+
+vi.mock('../src/services/workspaces.api.js', () => ({
+  fetchWorkspaces: vi.fn().mockResolvedValue([]),
+  fetchWorkspaceMembers: vi.fn().mockResolvedValue([]),
+  createWorkspace: vi.fn(),
+  addWorkspaceMember: vi.fn(),
+  updateWorkspaceMemberRole: vi.fn(),
+  removeWorkspaceMember: vi.fn(),
+  fetchUserProfile: vi
+    .fn()
+    .mockResolvedValue({ displayName: 'Test User', email: 'test@example.com', timezone: 'UTC' }),
+  updateUserProfile: vi.fn(),
+  fetchActiveSessions: vi.fn().mockResolvedValue([]),
+  revokeSession: vi.fn(),
+  revokeAllSessions: vi.fn(),
+  fetchUserDevices: vi.fn().mockResolvedValue([]),
+}));
+
+vi.mock('../src/services/notifications.api.js', () => ({
+  fetchNotifications: vi.fn().mockResolvedValue([]),
+  fetchUnreadCount: vi.fn().mockResolvedValue(0),
+  markNotificationRead: vi.fn().mockResolvedValue({}),
+  dismissNotification: vi.fn().mockResolvedValue({}),
+  markAllNotificationsRead: vi.fn().mockResolvedValue({}),
+  fetchNotificationPreferences: vi.fn().mockResolvedValue({}),
+  updateNotificationPreferences: vi.fn().mockResolvedValue({}),
+  registerPushToken: vi.fn().mockResolvedValue({}),
 }));
 
 describe('Web Application Shell (Task 1.1)', () => {
@@ -75,7 +157,7 @@ describe('Web Application Shell (Task 1.1)', () => {
     expect(container.textContent).toContain('Calendars');
   });
 
-  it('renders placeholder views for remaining future shell routes (e.g. Academic Phase 18)', async () => {
+  it('renders academic interface at /academic (Phase 18)', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     const root = createRoot(container);
@@ -88,8 +170,24 @@ describe('Web Application Shell (Task 1.1)', () => {
       );
     });
 
-    expect(container.textContent).toContain('Academic Scheduling');
-    expect(container.textContent).toContain('Phase 18');
+    expect(container.textContent).toContain('Academic');
+  });
+
+  it('renders placeholder views for remaining future shell routes (e.g. Settings)', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(
+        <MemoryRouter initialEntries={['/settings']}>
+          <App />
+        </MemoryRouter>,
+      );
+    });
+
+    expect(container.textContent).toContain('Settings & Workspaces');
+    expect(container.textContent).toContain('Phase 4');
   });
 
   it('renders projects interface at /projects (Phase 6)', async () => {
@@ -158,7 +256,7 @@ describe('Web Application Shell (Task 1.1)', () => {
     });
 
     expect(container.textContent).toContain('Sign In');
-    expect(container.textContent).toContain('Continue with Google (Phase 3)');
+    expect(container.textContent).toContain('Continue with Google');
     expect(container.textContent).toContain('Return to Today Cockpit');
   });
 

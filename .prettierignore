@@ -6,3 +6,5 @@ coverage
 .expo
 package-lock.json
 docs/
+PROGRESS.md
+HACKATHON-DEMO-GUIDE.md

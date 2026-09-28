@@ -28,6 +28,7 @@ import { EventDetailModal } from '../components/calendar/EventDetailModal.jsx';
 import * as todayApi from '../services/today.api.js';
 import * as tasksApi from '../services/tasks.api.js';
 import * as calendarApi from '../services/calendar.api.js';
+import { getGoogleStatus } from '../services/auth.api.js';
 
 const PRIORITY_BADGES = {
   P0: {
@@ -91,6 +92,7 @@ export function TodayPage() {
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [calendars, setCalendars] = useState([]);
   const [showCompleted, setShowCompleted] = useState(false);
+  const [googleIntegration, setGoogleIntegration] = useState(null);
 
   // Fetch Cockpit data
   const loadCockpit = useCallback(async () => {
@@ -117,10 +119,21 @@ export function TodayPage() {
     }
   }, [workspaceId]);
 
+  // Load Google Workspace integration status
+  const loadGoogleStatus = useCallback(async () => {
+    try {
+      const status = await getGoogleStatus();
+      setGoogleIntegration(status);
+    } catch {
+      // Non-blocking
+    }
+  }, []);
+
   useEffect(() => {
     loadCockpit();
     loadCalendars();
-  }, [loadCockpit, loadCalendars]);
+    loadGoogleStatus();
+  }, [loadCockpit, loadCalendars, loadGoogleStatus]);
 
   // Global event listeners (tasks and events)
   useEffect(() => {
@@ -332,6 +345,132 @@ export function TodayPage() {
           </div>
         }
       />
+
+      {/* Google Workspace Integration Status Bar */}
+      <div
+        data-testid="google-workspace-status-bar"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          gap: '12px',
+          padding: '10px 16px',
+          borderRadius: 'var(--radius-md, 8px)',
+          backgroundColor: 'var(--bg-secondary, #0f172a)',
+          border: '1px solid var(--border-subtle, #1e293b)',
+          marginBottom: '20px',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+          <span
+            style={{
+              fontSize: '0.8125rem',
+              fontWeight: 600,
+              color: 'var(--text-primary, #f8fafc)',
+            }}
+          >
+            Google Workspace:
+          </span>
+
+          {/* Calendar Indicator */}
+          <div
+            data-testid="status-indicator-calendar"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              fontSize: '0.8125rem',
+              color: googleIntegration?.services?.calendar
+                ? '#10b981'
+                : 'var(--text-tertiary, #64748b)',
+            }}
+          >
+            <span
+              style={{
+                width: '8px',
+                height: '8px',
+                borderRadius: '50%',
+                backgroundColor: googleIntegration?.services?.calendar ? '#10b981' : '#64748b',
+                display: 'inline-block',
+              }}
+            />
+            <span>
+              Calendar: {googleIntegration?.services?.calendar ? 'Connected' : 'Not Connected'}
+            </span>
+          </div>
+
+          {/* Tasks Indicator */}
+          <div
+            data-testid="status-indicator-tasks"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              fontSize: '0.8125rem',
+              color: googleIntegration?.services?.tasks
+                ? '#10b981'
+                : 'var(--text-tertiary, #64748b)',
+            }}
+          >
+            <span
+              style={{
+                width: '8px',
+                height: '8px',
+                borderRadius: '50%',
+                backgroundColor: googleIntegration?.services?.tasks ? '#10b981' : '#64748b',
+                display: 'inline-block',
+              }}
+            />
+            <span>Tasks: {googleIntegration?.services?.tasks ? 'Connected' : 'Not Connected'}</span>
+          </div>
+
+          {/* Drive Indicator */}
+          <div
+            data-testid="status-indicator-drive"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              fontSize: '0.8125rem',
+              color: googleIntegration?.services?.drive
+                ? '#10b981'
+                : 'var(--text-tertiary, #64748b)',
+            }}
+          >
+            <span
+              style={{
+                width: '8px',
+                height: '8px',
+                borderRadius: '50%',
+                backgroundColor: googleIntegration?.services?.drive ? '#10b981' : '#64748b',
+                display: 'inline-block',
+              }}
+            />
+            <span>Drive: {googleIntegration?.services?.drive ? 'Connected' : 'Not Connected'}</span>
+          </div>
+        </div>
+
+        {(!googleIntegration?.services?.calendar ||
+          !googleIntegration?.services?.tasks ||
+          !googleIntegration?.services?.drive) && (
+          <a
+            href="/onboarding"
+            data-testid="connect-google-services-link"
+            style={{
+              fontSize: '0.8125rem',
+              fontWeight: 500,
+              color: 'var(--accent-primary, #38bdf8)',
+              textDecoration: 'none',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+            }}
+          >
+            <span>Connect Workspace →</span>
+          </a>
+        )}
+      </div>
 
       {/* Error Alert */}
       {error && (

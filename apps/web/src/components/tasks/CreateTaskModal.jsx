@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Modal } from '../common/Modal.jsx';
 import { Button } from '../common/Button.jsx';
 import { ErrorBanner } from '../common/ErrorBanner.jsx';
+import { listEligibleMembers } from '../../services/collaboration.api.js';
 
 export function CreateTaskModal({
   isOpen,
@@ -10,12 +11,15 @@ export function CreateTaskModal({
   initialProjectId = null,
   initialBoardId = null,
   initialBoardColumnId = null,
+  workspaceId = null,
 }) {
   const [title, setTitle] = useState('');
   const [priority, setPriority] = useState('P3');
   const [dueAt, setDueAt] = useState('');
   const [estimatedDuration, setEstimatedDuration] = useState('');
   const [description, setDescription] = useState('');
+  const [assigneeUserId, setAssigneeUserId] = useState('');
+  const [eligibleMembers, setEligibleMembers] = useState([]);
   const [recurrenceFreq, setRecurrenceFreq] = useState('NONE');
   const [error, setError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
@@ -29,11 +33,18 @@ export function CreateTaskModal({
       setDueAt('');
       setEstimatedDuration('');
       setDescription('');
+      setAssigneeUserId('');
       setRecurrenceFreq('NONE');
       setError(null);
       setSubmitting(false);
+
+      if (workspaceId) {
+        listEligibleMembers(workspaceId)
+          .then(setEligibleMembers)
+          .catch(() => {});
+      }
     }
-  }, [isOpen]);
+  }, [isOpen, workspaceId]);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -52,6 +63,7 @@ export function CreateTaskModal({
         description: description.trim() || undefined,
         dueAt: dueAt ? new Date(dueAt).toISOString() : undefined,
         estimatedDuration: estimatedDuration ? parseInt(estimatedDuration, 10) : undefined,
+        assigneeUserId: assigneeUserId || undefined,
         projectId: initialProjectId || undefined,
         boardId: initialBoardId || undefined,
         boardColumnId: initialBoardColumnId || undefined,
@@ -202,6 +214,47 @@ export function CreateTaskModal({
             />
           </div>
         </div>
+
+        {/* Assignee Selection (Phase 21: Trusted Sharing & Collaboration) */}
+        {eligibleMembers.length > 0 && (
+          <div style={{ marginBottom: '16px' }}>
+            <label
+              htmlFor="task-assignee-select"
+              style={{
+                display: 'block',
+                fontSize: '0.85rem',
+                fontWeight: 500,
+                color: 'var(--text-secondary)',
+                marginBottom: '6px',
+              }}
+            >
+              Assignee
+            </label>
+            <select
+              id="task-assignee-select"
+              value={assigneeUserId}
+              onChange={e => setAssigneeUserId(e.target.value)}
+              disabled={submitting}
+              style={{
+                width: '100%',
+                padding: '9px 12px',
+                backgroundColor: 'var(--bg-surface)',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: 'var(--radius-sm)',
+                color: 'var(--text-primary)',
+                fontSize: '0.9rem',
+                boxSizing: 'border-box',
+              }}
+            >
+              <option value="">Unassigned (Self)</option>
+              {eligibleMembers.map(m => (
+                <option key={m.userId} value={m.userId}>
+                  {m.userDisplayName || m.userEmail} ({m.role})
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         {/* Estimated Duration */}
         <div style={{ marginBottom: '16px' }}>

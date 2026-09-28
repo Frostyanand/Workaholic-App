@@ -2,7 +2,10 @@ import pg from 'pg';
 import { randomUUID } from 'node:crypto';
 import { config, sanitizeDatabaseUrl } from './config.js';
 
-const { Pool } = pg;
+const { Pool, types } = pg;
+
+// Parse PostgreSQL DATE (OID 1082) as plain 'YYYY-MM-DD' strings to prevent timezone shifts
+types.setTypeParser(1082, str => str);
 
 /**
  * Creates and configures a PostgreSQL connection pool with production-grade

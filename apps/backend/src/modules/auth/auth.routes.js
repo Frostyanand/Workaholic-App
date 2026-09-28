@@ -6,6 +6,7 @@ import { firebaseAuthService } from './firebase-auth.service.js';
 import { accountBootstrapService } from './account-bootstrap.service.js';
 import { oauthBoundaryService } from './oauth-boundary.service.js';
 import * as securityEventsRepo from './security-events.repository.js';
+import { authRateLimit } from '../../core/rate-limiter.js';
 import {
   firebaseAuthInputSchema,
   oauthAuthorizeQuerySchema,
@@ -141,6 +142,7 @@ export async function authRoutes(fastify, _opts) {
   fastify.post(
     '/session',
     {
+      preHandler: [authRateLimit],
       preValidation: [validateRequest({ body: firebaseAuthInputSchema })],
     },
     handleSessionExchange,
@@ -150,6 +152,7 @@ export async function authRoutes(fastify, _opts) {
   fastify.post(
     '/firebase',
     {
+      preHandler: [authRateLimit],
       preValidation: [validateRequest({ body: firebaseAuthInputSchema })],
     },
     handleSessionExchange,
@@ -280,6 +283,93 @@ export async function authRoutes(fastify, _opts) {
       return sendSuccess(reply, result);
     },
   );
+
+  // Browser redirect handler for Google OAuth popup
+  fastify.get('/google/callback', async (request, reply) => {
+    const { code, state, error } = request.query || {};
+
+    if (error) {
+      return reply.type('text/html').send(`
+        <!DOCTYPE html>
+        <html>
+        <head><title>Authorization Cancelled - Workaholic</title></head>
+        <body style="font-family: system-ui, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; background: #0f172a; color: #f8fafc;">
+          <div style="text-align: center; padding: 24px; border: 1px solid #ef4444; border-radius: 8px; background: #1e293b;">
+            <h2 style="color: #ef4444; margin: 0 0 12px;">Authorization Cancelled</h2>
+            <p style="color: #94a3b8; margin: 0;">${error}</p>
+            <p style="color: #64748b; font-size: 0.8rem; margin-top: 12px;">You may close this window.</p>
+          </div>
+          <script>
+            if (window.opener) {
+              window.opener.postMessage({ type: 'GOOGLE_AUTH_ERROR', error: '${error}' }, '*');
+            }
+            setTimeout(() => window.close(), 2500);
+          </script>
+        </body>
+        </html>
+      `);
+    }
+
+    const stateEntry = oauthBoundaryService.pendingStates?.get(state);
+    if (!stateEntry || !code) {
+      return reply.type('text/html').send(`
+        <!DOCTYPE html>
+        <html>
+        <head><title>Invalid OAuth State - Workaholic</title></head>
+        <body style="font-family: system-ui, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; background: #0f172a; color: #f8fafc;">
+          <div style="text-align: center; padding: 24px; border: 1px solid #eab308; border-radius: 8px; background: #1e293b;">
+            <h2 style="color: #eab308; margin: 0 0 12px;">State Expired or Invalid</h2>
+            <p style="color: #94a3b8; margin: 0;">Please return to Workaholic and try connecting again.</p>
+          </div>
+          <script>setTimeout(() => window.close(), 2500);</script>
+        </body>
+        </html>
+      `);
+    }
+
+    try {
+      await oauthBoundaryService.exchangeAuthorizationCode({
+        userId: stateEntry.userId,
+        code,
+        state,
+        service: stateEntry.service,
+      });
+
+      return reply.type('text/html').send(`
+        <!DOCTYPE html>
+        <html>
+        <head><title>Connected Successfully - Workaholic</title></head>
+        <body style="font-family: system-ui, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; background: #0f172a; color: #f8fafc;">
+          <div style="text-align: center; padding: 32px; border: 1px solid #334155; border-radius: 12px; background: #1e293b; max-width: 400px; box-shadow: 0 10px 25px rgba(0,0,0,0.5);">
+            <h2 style="color: #38bdf8; margin: 0 0 12px; font-size: 1.25rem;">Connected Successfully!</h2>
+            <p style="color: #94a3b8; margin: 0 0 16px; font-size: 0.875rem;">Your Google account is now connected to Workaholic.</p>
+            <p style="color: #64748b; font-size: 0.75rem;">This window will close automatically...</p>
+          </div>
+          <script>
+            if (window.opener) {
+              window.opener.postMessage({ type: 'GOOGLE_AUTH_SUCCESS', service: '${stateEntry.service}' }, '*');
+            }
+            setTimeout(() => window.close(), 1500);
+          </script>
+        </body>
+        </html>
+      `);
+    } catch (err) {
+      return reply.type('text/html').send(`
+        <!DOCTYPE html>
+        <html>
+        <head><title>Connection Error - Workaholic</title></head>
+        <body style="font-family: system-ui, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; background: #0f172a; color: #f8fafc;">
+          <div style="text-align: center; padding: 24px; border: 1px solid #ef4444; border-radius: 8px; background: #1e293b;">
+            <h2 style="color: #ef4444; margin: 0 0 12px;">Connection Failed</h2>
+            <p style="color: #94a3b8; margin: 0;">${err.message}</p>
+          </div>
+          <script>setTimeout(() => window.close(), 3000);</script>
+        </body>
+        </html>
+      `);
+    }
+  });
 
   fastify.post(
     '/google/callback',

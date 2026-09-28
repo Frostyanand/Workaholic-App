@@ -15,11 +15,16 @@ export function ScheduleWorkBlockModal({ isOpen, onClose, task, onSubmit }) {
       const now = new Date();
       setDate(toLocalDateString(now));
 
-      // Suggest next hour
-      const nextHour = (now.getHours() + 1) % 24;
-      const endHour = (nextHour + 1) % 24;
-      setStartTime(`${String(nextHour).padStart(2, '0')}:00`);
-      setEndTime(`${String(endHour).padStart(2, '0')}:00`);
+      // Suggest next hour, or morning hours if late at night
+      if (now.getHours() >= 22) {
+        setStartTime('09:00');
+        setEndTime('10:00');
+      } else {
+        const nextHour = now.getHours() + 1;
+        const endHour = nextHour + 1;
+        setStartTime(`${String(nextHour).padStart(2, '0')}:00`);
+        setEndTime(`${String(endHour).padStart(2, '0')}:00`);
+      }
       setError(null);
     }
   }, [isOpen]);

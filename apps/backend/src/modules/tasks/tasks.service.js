@@ -10,6 +10,10 @@ import * as recurrenceRepo from '../recurrence/recurrence.repository.js';
 import * as taskOccurrencesRepo from './task_occurrences.repository.js';
 import { expandOccurrences } from '../recurrence/recurrence.engine.js';
 import { remindersService } from '../reminders/reminders.service.js';
+import * as workspacesRepo from '../workspaces/workspaces.repository.js';
+import * as collabRepo from '../collaboration/collaboration.repository.js';
+import { notificationsService } from '../notifications/notifications.service.js';
+import { NOTIFICATION_TYPE, ACTIVITY_TYPE, TRUSTED_PERMISSION } from '@workaholic/shared';
 import { NotFoundError, ValidationError, ConflictError } from '../../core/errors.js';
 
 /**
@@ -91,6 +95,40 @@ export function wouldCreateDependencyCycle(existingEdges, newSource, newTarget) 
   }
 
   return false;
+}
+
+/**
+ * Validates that a task assignee is an authorized workspace participant or trusted contact
+ * Conforms to BR-COLLAB-002, REQ-COLLAB-002
+ */
+export async function validateAssigneeEligibility(assignedTo, workspaceId, client) {
+  if (!assignedTo) return true;
+  // 1. Check workspace membership
+  const membership = await workspacesRepo.findMembership(workspaceId, assignedTo, client);
+  if (membership && membership.status === 'ACTIVE') {
+    return true;
+  }
+  // 2. Check trusted relationship with workspace owner
+  const workspace = await workspacesRepo.findWorkspaceById(workspaceId, client);
+  if (workspace) {
+    const hasTrust =
+      (await collabRepo.hasTrustedPermission(
+        workspace.ownerUserId,
+        assignedTo,
+        TRUSTED_PERMISSION.VIEW_TASKS,
+        client,
+      )) ||
+      (await collabRepo.hasTrustedPermission(
+        workspace.ownerUserId,
+        assignedTo,
+        TRUSTED_PERMISSION.EDIT_TASKS,
+        client,
+      ));
+    if (hasTrust) return true;
+  }
+  throw new ValidationError(
+    'A task cannot be assigned to an unauthorized user outside the workspace or trusted context',
+  );
 }
 
 /**
@@ -202,6 +240,10 @@ export class TasksService {
       recurrenceRuleId = rule.id;
     }
 
+    if (taskData.assignedTo) {
+      await validateAssigneeEligibility(taskData.assignedTo, workspaceId, client);
+    }
+
     const task = await this.repo.createTask(
       {
         ...taskData,
@@ -214,6 +256,36 @@ export class TasksService {
       },
       client,
     );
+
+    if (task.assignedTo) {
+      try {
+        await collabRepo.createActivityEntry(
+          {
+            workspaceId,
+            actorUserId: userId,
+            targetType: 'TASK',
+            targetId: task.id,
+            activityType: ACTIVITY_TYPE.TASK_ASSIGNED,
+            metadata: { assignedTo: task.assignedTo, taskTitle: task.title },
+          },
+          client,
+        );
+        if (task.assignedTo !== userId) {
+          await notificationsService.sendNotification(
+            {
+              recipientUserId: task.assignedTo,
+              notificationType: NOTIFICATION_TYPE.TASK_ASSIGNED,
+              title: 'Task Assigned to You',
+              body: `You were assigned to "${task.title}".`,
+              targetReference: { taskId: task.id, workspaceId },
+            },
+            client,
+          );
+        }
+      } catch {
+        // Non-blocking
+      }
+    }
 
     return {
       ...task,
@@ -384,6 +456,10 @@ export class TasksService {
       }
     }
 
+    if ('assignedTo' in updateData && updateData.assignedTo) {
+      await validateAssigneeEligibility(updateData.assignedTo, workspaceId, client);
+    }
+
     const updated = await this.repo.updateTask(
       taskId,
       workspaceId,
@@ -393,6 +469,38 @@ export class TasksService {
     );
     if (!updated) {
       throw new ConflictError('Task was modified concurrently. Please reload.');
+    }
+
+    if (
+      'assignedTo' in updateData &&
+      updateData.assignedTo &&
+      updateData.assignedTo !== current.assignedTo
+    ) {
+      try {
+        await collabRepo.createActivityEntry(
+          {
+            workspaceId,
+            actorUserId: updated.createdBy || current.createdBy,
+            targetType: 'TASK',
+            targetId: taskId,
+            activityType: ACTIVITY_TYPE.TASK_ASSIGNED,
+            metadata: { assignedTo: updateData.assignedTo, taskTitle: updated.title },
+          },
+          client,
+        );
+        await notificationsService.sendNotification(
+          {
+            recipientUserId: updateData.assignedTo,
+            notificationType: NOTIFICATION_TYPE.TASK_ASSIGNED,
+            title: 'Task Assigned to You',
+            body: `You were assigned to "${updated.title}".`,
+            targetReference: { taskId, workspaceId },
+          },
+          client,
+        );
+      } catch (err) {
+        console.error('Task assignment notification error:', err);
+      }
     }
 
     if (payload.status === 'COMPLETED' || payload.status === 'CANCELLED') {

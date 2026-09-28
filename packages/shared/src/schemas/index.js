@@ -18,6 +18,15 @@ import {
   NOTIFICATION_TYPE,
   TRUSTED_PERMISSION,
   SYNC_DIRECTION,
+  NOTE_CONTENT_FORMAT,
+  NOTE_RELATIONSHIP_TARGET_TYPE,
+  NOTE_RELATIONSHIP_TYPE,
+  SEMESTER_STATUS,
+  ACADEMIC_DAY_STATUS,
+  BOOKING_PAGE_STATUS,
+  BOOKING_STATUS,
+  COLLAB_TARGET_TYPE,
+  ACTIVITY_TYPE,
 } from '../constants/index.js';
 
 export const idSchema = z.string().uuid({ message: 'Invalid UUID identifier' });
@@ -320,14 +329,14 @@ export const authSessionExchangeInputSchema = firebaseAuthInputSchema;
 export const googleAuthInputSchema = firebaseAuthInputSchema; // Backwards compatibility alias
 
 export const oauthAuthorizeQuerySchema = z.object({
-  service: z.enum(['CALENDAR', 'TASKS', 'DRIVE']),
+  service: z.enum(['CALENDAR', 'TASKS', 'DRIVE', 'WORKSPACE']),
   redirectUri: z.string().url().optional(),
 });
 
 export const oauthCallbackInputSchema = z.object({
   code: z.string().trim().min(1, 'Authorization code is required'),
   state: z.string().trim().min(1, 'State token is required'),
-  service: z.enum(['CALENDAR', 'TASKS', 'DRIVE']),
+  service: z.enum(['CALENDAR', 'TASKS', 'DRIVE', 'WORKSPACE']),
 });
 
 export const updateDeviceTrustInputSchema = z.object({
@@ -716,22 +725,52 @@ export const updateReminderSchema = z.object({
 export const snoozeReminderSchema = z
   .object({
     durationMinutes: z.coerce.number().int().positive().optional(),
+    snoozeMinutes: z.coerce.number().int().positive().optional(),
     snoozeUntil: z
       .string()
       .datetime({ message: 'snoozeUntil must be a valid ISO 8601 string' })
       .optional(),
+    snoozedUntil: z
+      .string()
+      .datetime({ message: 'snoozedUntil must be a valid ISO 8601 string' })
+      .optional(),
   })
-  .refine(data => data.durationMinutes !== undefined || data.snoozeUntil !== undefined, {
-    message: 'Either durationMinutes or snoozeUntil must be provided',
-  });
+  .refine(
+    data =>
+      data.durationMinutes !== undefined ||
+      data.snoozeMinutes !== undefined ||
+      data.snoozeUntil !== undefined ||
+      data.snoozedUntil !== undefined,
+    {
+      message: 'Either durationMinutes/snoozeMinutes or snoozeUntil/snoozedUntil must be provided',
+    },
+  )
+  .transform(data => ({
+    durationMinutes: data.durationMinutes ?? data.snoozeMinutes,
+    snoozeMinutes: data.snoozeMinutes ?? data.durationMinutes,
+    snoozeUntil: data.snoozeUntil ?? data.snoozedUntil,
+    snoozedUntil: data.snoozedUntil ?? data.snoozeUntil,
+  }));
 
 export const dismissReminderSchema = z.object({
   dismissAllOccurrences: z.boolean().default(false).optional(),
 });
 
-export const addRecipientSchema = z.object({
-  userId: z.string().uuid({ message: 'userId must be a valid UUID' }),
-});
+export const addRecipientSchema = z
+  .object({
+    userId: z.string().uuid({ message: 'userId must be a valid UUID' }).optional(),
+    recipientUserId: z
+      .string()
+      .uuid({ message: 'recipientUserId must be a valid UUID' })
+      .optional(),
+  })
+  .refine(data => data.userId || data.recipientUserId, {
+    message: 'userId or recipientUserId is required',
+  })
+  .transform(data => ({
+    userId: data.userId || data.recipientUserId,
+    recipientUserId: data.recipientUserId || data.userId,
+  }));
 
 export const listRemindersQuerySchema = z.object({
   taskId: z.string().uuid().optional(),
@@ -859,4 +898,633 @@ export const syncRecoverySchema = z.object({
   service: z.enum(['CALENDAR', 'TASKS', 'DRIVE', 'ALL']).default('ALL'),
   resetCursor: z.boolean().default(false),
   force: z.boolean().default(true),
+});
+
+export const createNoteSchema = z.object({
+  title: z.string().trim().min(1, 'Title cannot be empty').max(255).default('Untitled Note'),
+  content: z.union([z.array(z.record(z.any())), z.record(z.any()), z.string()]).default([]),
+  contentText: z.string().max(500000).optional(),
+  contentFormat: z.nativeEnum(NOTE_CONTENT_FORMAT).default(NOTE_CONTENT_FORMAT.STRUCTURED),
+  category: z.string().trim().max(100).nullable().optional(),
+  isPinned: z.boolean().default(false),
+  isFavorite: z.boolean().default(false),
+  isArchived: z.boolean().default(false),
+  tags: z.array(z.string().trim().min(1).max(100)).max(50).optional(),
+});
+
+export const updateNoteSchema = z.object({
+  title: z.string().trim().min(1, 'Title cannot be empty').max(255).optional(),
+  content: z.union([z.array(z.record(z.any())), z.record(z.any()), z.string()]).optional(),
+  contentText: z.string().max(500000).optional(),
+  contentFormat: z.nativeEnum(NOTE_CONTENT_FORMAT).optional(),
+  category: z.string().trim().max(100).nullable().optional(),
+  isPinned: z.boolean().optional(),
+  isFavorite: z.boolean().optional(),
+  isArchived: z.boolean().optional(),
+  tags: z.array(z.string().trim().min(1).max(100)).max(50).optional(),
+});
+
+export const noteQuerySchema = z.object({
+  q: z.string().max(255).optional(),
+  category: z.string().max(100).optional(),
+  tag: z.string().max(100).optional(),
+  isPinned: z
+    .union([z.boolean(), z.enum(['true', 'false'])])
+    .transform(val => val === true || val === 'true')
+    .optional(),
+  isFavorite: z
+    .union([z.boolean(), z.enum(['true', 'false'])])
+    .transform(val => val === true || val === 'true')
+    .optional(),
+  isArchived: z
+    .union([z.boolean(), z.enum(['true', 'false'])])
+    .transform(val => val === true || val === 'true')
+    .default(false),
+  limit: z.coerce.number().int().positive().max(100).default(50),
+  offset: z.coerce.number().int().nonnegative().default(0),
+});
+
+export const createNoteRelationshipSchema = z.object({
+  targetType: z.nativeEnum(NOTE_RELATIONSHIP_TARGET_TYPE),
+  targetId: idSchema,
+  relationshipType: z.nativeEnum(NOTE_RELATIONSHIP_TYPE).default(NOTE_RELATIONSHIP_TYPE.RELATES_TO),
+  metadata: z.record(z.any()).optional().default({}),
+});
+
+export const convertChecklistItemSchema = z.object({
+  itemId: z.string().min(1).max(100),
+  title: z.string().trim().min(1).max(255).optional(),
+  projectId: idSchema.optional().nullable(),
+  priority: z.enum(['P0', 'P1', 'P2', 'P3', 'P4']).optional(),
+  description: z.string().max(2000).optional(),
+});
+
+export const tagSchema = z.object({
+  name: z.string().trim().min(1).max(100),
+  color: z.string().trim().max(50).default('#6366F1'),
+});
+
+// Phase 18: Academic Calendar and Day Order Schemas
+export const createSemesterSchema = z
+  .object({
+    name: z.string().trim().min(1, 'Semester name is required').max(255),
+    academicYear: z.string().trim().max(50).optional().nullable(),
+    institution: z.string().trim().max(255).optional().nullable(),
+    startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'startDate must be in YYYY-MM-DD format'),
+    endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'endDate must be in YYYY-MM-DD format'),
+    timezone: z.string().trim().max(100).default('UTC'),
+    dayOrderCount: z.coerce.number().int().min(1).max(10).default(5),
+    calendarId: idSchema.optional().nullable(),
+    metadata: z.record(z.any()).optional().default({}),
+  })
+  .refine(data => data.endDate >= data.startDate, {
+    message: 'endDate cannot be before startDate',
+    path: ['endDate'],
+  });
+
+export const updateSemesterSchema = z
+  .object({
+    name: z.string().trim().min(1).max(255).optional(),
+    academicYear: z.string().trim().max(50).optional().nullable(),
+    institution: z.string().trim().max(255).optional().nullable(),
+    startDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, 'startDate must be in YYYY-MM-DD format')
+      .optional(),
+    endDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, 'endDate must be in YYYY-MM-DD format')
+      .optional(),
+    timezone: z.string().trim().max(100).optional(),
+    dayOrderCount: z.coerce.number().int().min(1).max(10).optional(),
+    calendarId: idSchema.optional().nullable(),
+    status: z.nativeEnum(SEMESTER_STATUS).optional(),
+    metadata: z.record(z.any()).optional(),
+  })
+  .refine(
+    data => {
+      if (data.startDate && data.endDate) {
+        return data.endDate >= data.startDate;
+      }
+      return true;
+    },
+    {
+      message: 'endDate cannot be before startDate',
+      path: ['endDate'],
+    },
+  );
+
+export const setAcademicDateSchema = z.object({
+  calendarDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'calendarDate must be in YYYY-MM-DD format'),
+  dayStatus: z.nativeEnum(ACADEMIC_DAY_STATUS),
+  reason: z.string().trim().max(500).optional().nullable(),
+  dayOrder: z
+    .string()
+    .regex(/^DO\d+$/, 'dayOrder must be in format DO1..DO10')
+    .optional()
+    .nullable(),
+  overrideDayOrder: z
+    .string()
+    .regex(/^DO\d+$/, 'overrideDayOrder must be in format DO1..DO10')
+    .optional()
+    .nullable(),
+});
+
+export const academicDateQuerySchema = z.object({
+  startDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  endDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+});
+
+export const createClassScheduleSchema = z.object({
+  name: z.string().trim().min(1, 'Schedule name is required').max(255),
+  description: z.string().trim().max(2000).optional().nullable(),
+  semesterId: idSchema.optional().nullable(),
+  isActive: z.boolean().default(true),
+});
+
+export const updateClassScheduleSchema = z.object({
+  name: z.string().trim().min(1).max(255).optional(),
+  description: z.string().trim().max(2000).optional().nullable(),
+  semesterId: idSchema.optional().nullable(),
+  isActive: z.boolean().optional(),
+});
+
+export const createScheduleEntrySchema = z
+  .object({
+    classScheduleId: idSchema.optional(),
+    dayOrder: z.string().regex(/^DO\d+$/, 'dayOrder must be in format DO1..DO10'),
+    courseName: z.string().trim().min(1, 'Course name is required').max(255),
+    courseCode: z.string().trim().max(50).optional().nullable(),
+    instructor: z.string().trim().max(255).optional().nullable(),
+    room: z.string().trim().max(100).optional().nullable(),
+    startTime: z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/, 'startTime must be HH:MM or HH:MM:SS'),
+    endTime: z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/, 'endTime must be HH:MM or HH:MM:SS'),
+    color: z.string().trim().max(50).default('#6366F1'),
+    metadata: z.record(z.any()).optional().default({}),
+  })
+  .refine(
+    data => {
+      const s = data.startTime.length === 5 ? `${data.startTime}:00` : data.startTime;
+      const e = data.endTime.length === 5 ? `${data.endTime}:00` : data.endTime;
+      return e > s;
+    },
+    {
+      message: 'endTime must be strictly after startTime',
+      path: ['endTime'],
+    },
+  );
+
+export const updateScheduleEntrySchema = z
+  .object({
+    dayOrder: z
+      .string()
+      .regex(/^DO\d+$/)
+      .optional(),
+    courseName: z.string().trim().min(1).max(255).optional(),
+    courseCode: z.string().trim().max(50).optional().nullable(),
+    instructor: z.string().trim().max(255).optional().nullable(),
+    room: z.string().trim().max(100).optional().nullable(),
+    startTime: z
+      .string()
+      .regex(/^\d{2}:\d{2}(:\d{2})?$/)
+      .optional(),
+    endTime: z
+      .string()
+      .regex(/^\d{2}:\d{2}(:\d{2})?$/)
+      .optional(),
+    color: z.string().trim().max(50).optional(),
+    metadata: z.record(z.any()).optional(),
+  })
+  .refine(
+    data => {
+      if (data.startTime && data.endTime) {
+        const s = data.startTime.length === 5 ? `${data.startTime}:00` : data.startTime;
+        const e = data.endTime.length === 5 ? `${data.endTime}:00` : data.endTime;
+        return e > s;
+      }
+      return true;
+    },
+    {
+      message: 'endTime must be strictly after startTime',
+      path: ['endTime'],
+    },
+  );
+
+export const academicGenerateSchema = z.object({
+  classScheduleId: idSchema.optional(),
+  startDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  endDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+});
+
+export const cancelClassSchema = z.object({
+  scheduleEntryId: idSchema,
+  calendarDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'calendarDate must be in YYYY-MM-DD format'),
+  reason: z.string().trim().max(1000).optional().nullable(),
+});
+
+export const rescheduleClassSchema = z
+  .object({
+    scheduleEntryId: idSchema,
+    calendarDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, 'calendarDate must be in YYYY-MM-DD format'),
+    rescheduledDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, 'rescheduledDate must be in YYYY-MM-DD format'),
+    rescheduledStartTime: z
+      .string()
+      .regex(/^\d{2}:\d{2}(:\d{2})?$/, 'rescheduledStartTime must be HH:MM or HH:MM:SS'),
+    rescheduledEndTime: z
+      .string()
+      .regex(/^\d{2}:\d{2}(:\d{2})?$/, 'rescheduledEndTime must be HH:MM or HH:MM:SS'),
+    rescheduledRoom: z.string().trim().max(100).optional().nullable(),
+    reason: z.string().trim().max(1000).optional().nullable(),
+  })
+  .refine(
+    data => {
+      const s =
+        data.rescheduledStartTime.length === 5
+          ? `${data.rescheduledStartTime}:00`
+          : data.rescheduledStartTime;
+      const e =
+        data.rescheduledEndTime.length === 5
+          ? `${data.rescheduledEndTime}:00`
+          : data.rescheduledEndTime;
+      if (data.rescheduledDate === data.calendarDate) {
+        return e > s;
+      }
+      return e > s;
+    },
+    {
+      message: 'rescheduledEndTime must be strictly after rescheduledStartTime',
+      path: ['rescheduledEndTime'],
+    },
+  );
+
+// =========================================================
+// Phase 19: Public Calendar Schemas
+// =========================================================
+
+export const createPublicLinkSchema = z
+  .object({
+    expiresAt: z.string().datetime({ offset: true }).nullable().optional(),
+  })
+  .optional();
+
+export const publicCalendarQuerySchema = z
+  .object({
+    start: z.string().datetime({ offset: true }).optional(),
+    end: z.string().datetime({ offset: true }).optional(),
+    timezone: z.string().trim().max(100).optional(),
+  })
+  .refine(
+    data => {
+      if (data.start && data.end) {
+        return new Date(data.end).getTime() >= new Date(data.start).getTime();
+      }
+      return true;
+    },
+    {
+      message: 'end must be on or after start',
+      path: ['end'],
+    },
+  )
+  .refine(
+    data => {
+      if (data.start && data.end) {
+        const diffMs = new Date(data.end).getTime() - new Date(data.start).getTime();
+        const maxMs = 366 * 24 * 60 * 60 * 1000;
+        return diffMs <= maxMs;
+      }
+      return true;
+    },
+    {
+      message: 'Date range cannot exceed 366 days',
+      path: ['end'],
+    },
+  );
+
+export const publicTokenParamSchema = z.object({
+  token: z
+    .string()
+    .trim()
+    .min(16, 'Token is too short')
+    .max(128, 'Token is too long')
+    .regex(/^[a-zA-Z0-9_-]+$/, 'Malformed token characters'),
+});
+
+// =========================================================
+// Phase 20: Booking & Availability Schemas
+// =========================================================
+
+export const bookingSlugRegex = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+export const createBookingPageSchema = z.object({
+  name: z.string().trim().min(1, 'Name is required').max(255),
+  slug: z
+    .string()
+    .trim()
+    .min(2, 'Slug must be at least 2 characters')
+    .max(100, 'Slug cannot exceed 100 characters')
+    .regex(
+      bookingSlugRegex,
+      'Slug must consist of lowercase alphanumeric words separated by single hyphens',
+    ),
+  description: z.string().trim().max(2000).optional().nullable(),
+  timezone: z.string().trim().min(1).max(50).default('UTC'),
+  calendarId: idSchema.optional().nullable(),
+  status: z.nativeEnum(BOOKING_PAGE_STATUS).default(BOOKING_PAGE_STATUS.ACTIVE),
+});
+
+export const updateBookingPageSchema = z.object({
+  name: z.string().trim().min(1).max(255).optional(),
+  slug: z
+    .string()
+    .trim()
+    .min(2)
+    .max(100)
+    .regex(
+      bookingSlugRegex,
+      'Slug must consist of lowercase alphanumeric words separated by single hyphens',
+    )
+    .optional(),
+  description: z.string().trim().max(2000).optional().nullable(),
+  timezone: z.string().trim().min(1).max(50).optional(),
+  calendarId: idSchema.optional().nullable(),
+  status: z.nativeEnum(BOOKING_PAGE_STATUS).optional(),
+});
+
+export const createBookingTypeSchema = z.object({
+  name: z.string().trim().min(1, 'Name is required').max(255),
+  slug: z
+    .string()
+    .trim()
+    .min(2, 'Slug must be at least 2 characters')
+    .max(100)
+    .regex(
+      bookingSlugRegex,
+      'Slug must consist of lowercase alphanumeric words separated by single hyphens',
+    ),
+  description: z.string().trim().max(2000).optional().nullable(),
+  duration: z.coerce.number().int().min(5, 'Duration must be at least 5 minutes').max(1440),
+  bufferBefore: z.coerce.number().int().min(0, 'Buffer before must be >= 0').max(1440).default(0),
+  bufferAfter: z.coerce.number().int().min(0, 'Buffer after must be >= 0').max(1440).default(0),
+  minimumNotice: z.coerce
+    .number()
+    .int()
+    .min(0, 'Minimum notice must be >= 0')
+    .max(43200)
+    .default(120),
+  maximumHorizon: z.coerce
+    .number()
+    .int()
+    .min(1, 'Maximum horizon must be >= 1 day')
+    .max(365)
+    .default(30),
+  cancellationDeadline: z.coerce
+    .number()
+    .int()
+    .min(0, 'Cancellation deadline must be >= 0')
+    .max(43200)
+    .default(60),
+  reschedulingEnabled: z.boolean().default(true),
+  location: z.string().trim().max(255).optional().nullable(),
+  meetingUrl: z.string().trim().url().max(2048).optional().nullable().or(z.literal('')),
+  createTask: z.boolean().default(false),
+  taskPriority: z.nativeEnum(TASK_PRIORITY).default(TASK_PRIORITY.P3),
+  isActive: z.boolean().default(true),
+});
+
+export const updateBookingTypeSchema = z.object({
+  name: z.string().trim().min(1).max(255).optional(),
+  slug: z
+    .string()
+    .trim()
+    .min(2)
+    .max(100)
+    .regex(
+      bookingSlugRegex,
+      'Slug must consist of lowercase alphanumeric words separated by single hyphens',
+    )
+    .optional(),
+  description: z.string().trim().max(2000).optional().nullable(),
+  duration: z.coerce.number().int().min(5).max(1440).optional(),
+  bufferBefore: z.coerce.number().int().min(0).max(1440).optional(),
+  bufferAfter: z.coerce.number().int().min(0).max(1440).optional(),
+  minimumNotice: z.coerce.number().int().min(0).max(43200).optional(),
+  maximumHorizon: z.coerce.number().int().min(1).max(365).optional(),
+  cancellationDeadline: z.coerce.number().int().min(0).max(43200).optional(),
+  reschedulingEnabled: z.boolean().optional(),
+  location: z.string().trim().max(255).optional().nullable(),
+  meetingUrl: z.string().trim().url().max(2048).optional().nullable().or(z.literal('')),
+  createTask: z.boolean().optional(),
+  taskPriority: z.nativeEnum(TASK_PRIORITY).optional(),
+  isActive: z.boolean().optional(),
+});
+
+export const createAvailabilityRuleSchema = z
+  .object({
+    weekday: z.coerce.number().int().min(0).max(6),
+    startTime: z
+      .string()
+      .regex(/^\d{2}:\d{2}(:\d{2})?$/, 'startTime must be in HH:MM or HH:MM:SS format'),
+    endTime: z
+      .string()
+      .regex(/^\d{2}:\d{2}(:\d{2})?$/, 'endTime must be in HH:MM or HH:MM:SS format'),
+    effectiveFrom: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, 'effectiveFrom must be YYYY-MM-DD')
+      .optional()
+      .nullable(),
+    effectiveUntil: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, 'effectiveUntil must be YYYY-MM-DD')
+      .optional()
+      .nullable(),
+    timezone: z.string().trim().max(50).default('UTC'),
+  })
+  .refine(
+    data => {
+      const s = data.startTime.length === 5 ? `${data.startTime}:00` : data.startTime;
+      const e = data.endTime.length === 5 ? `${data.endTime}:00` : data.endTime;
+      return e > s;
+    },
+    {
+      message: 'endTime must be strictly after startTime',
+      path: ['endTime'],
+    },
+  );
+
+export const setAvailabilityRulesSchema = z.object({
+  rules: z.array(createAvailabilityRuleSchema),
+});
+
+export const createAvailabilityExceptionSchema = z
+  .object({
+    exceptionDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, 'exceptionDate must be in YYYY-MM-DD format'),
+    isUnavailable: z.boolean().default(true),
+    startTime: z
+      .string()
+      .regex(/^\d{2}:\d{2}(:\d{2})?$/, 'startTime must be in HH:MM or HH:MM:SS format')
+      .optional()
+      .nullable(),
+    endTime: z
+      .string()
+      .regex(/^\d{2}:\d{2}(:\d{2})?$/, 'endTime must be in HH:MM or HH:MM:SS format')
+      .optional()
+      .nullable(),
+    reason: z.string().trim().max(255).optional().nullable(),
+  })
+  .refine(
+    data => {
+      if (!data.isUnavailable) {
+        if (!data.startTime || !data.endTime) return false;
+        const s = data.startTime.length === 5 ? `${data.startTime}:00` : data.startTime;
+        const e = data.endTime.length === 5 ? `${data.endTime}:00` : data.endTime;
+        return e > s;
+      }
+      return true;
+    },
+    {
+      message:
+        'Available exceptions must provide valid startTime and endTime where endTime > startTime',
+      path: ['endTime'],
+    },
+  );
+
+export const bookingAvailabilityQuerySchema = z
+  .object({
+    bookingTypeId: idSchema,
+    startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'startDate must be in YYYY-MM-DD format'),
+    endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'endDate must be in YYYY-MM-DD format'),
+    timezone: z.string().trim().max(50).optional(),
+  })
+  .refine(
+    data => {
+      return data.endDate >= data.startDate;
+    },
+    {
+      message: 'endDate must be on or after startDate',
+      path: ['endDate'],
+    },
+  )
+  .refine(
+    data => {
+      const diffMs = new Date(data.endDate).getTime() - new Date(data.startDate).getTime();
+      const maxMs = 93 * 24 * 60 * 60 * 1000; // max 3 months query
+      return diffMs <= maxMs;
+    },
+    {
+      message: 'Availability query window cannot exceed 93 days',
+      path: ['endDate'],
+    },
+  );
+
+export const createPublicBookingSchema = z.object({
+  bookingTypeId: idSchema,
+  startAt: z.string().datetime({ offset: true }),
+  guestName: z.string().trim().min(1, 'Guest name is required').max(255),
+  guestEmail: z.string().trim().email('Valid email is required').max(255),
+  guestNotes: z.string().trim().max(2000).optional().nullable(),
+  timezone: z.string().trim().max(50).default('UTC'),
+  idempotencyKey: z.string().trim().max(128).optional().nullable(),
+});
+
+export const cancelBookingSchema = z.object({
+  reason: z.string().trim().max(1000).optional().nullable(),
+});
+
+export const rescheduleBookingSchema = z.object({
+  newStartAt: z.string().datetime({ offset: true }),
+  timezone: z.string().trim().max(50).optional(),
+  reason: z.string().trim().max(1000).optional().nullable(),
+});
+
+export const bookingSlugParamSchema = z.object({
+  slug: z.string().trim().min(2).max(100),
+});
+
+export const manageTokenParamSchema = z.object({
+  token: z
+    .string()
+    .trim()
+    .min(16, 'Token is too short')
+    .max(128, 'Token is too long')
+    .regex(/^[a-zA-Z0-9_-]+$/, 'Malformed token characters'),
+});
+
+export const listBookingsQuerySchema = z.object({
+  bookingPageId: idSchema.optional(),
+  status: z.nativeEnum(BOOKING_STATUS).optional(),
+  startDate: z.string().optional(),
+  endDate: z.string().optional(),
+});
+
+// Phase 21: Trusted Sharing & Collaboration Schemas
+export const createShareCodeSchema = z.object({
+  expiresInMinutes: z.coerce.number().int().min(5).max(1440).default(60),
+  defaultPermissions: z
+    .array(z.nativeEnum(TRUSTED_PERMISSION))
+    .default([
+      TRUSTED_PERMISSION.VIEW_CALENDAR,
+      TRUSTED_PERMISSION.RECEIVE_REMINDERS,
+      TRUSTED_PERMISSION.VIEW_TASKS,
+    ]),
+});
+
+export const redeemShareCodeSchema = z.object({
+  code: z.string().trim().min(6, 'Share code is required').max(64),
+});
+
+export const updateTrustedPermissionsSchema = z.object({
+  permissions: z.array(z.nativeEnum(TRUSTED_PERMISSION)),
+});
+
+export const createCommentSchema = z.object({
+  workspaceId: idSchema,
+  targetType: z.nativeEnum(COLLAB_TARGET_TYPE),
+  targetId: idSchema,
+  content: z.string().trim().min(1, 'Comment content cannot be empty').max(10000),
+  mentionedUserIds: z.array(idSchema).optional(),
+});
+
+export const listCommentsQuerySchema = z.object({
+  workspaceId: idSchema,
+  targetType: z.nativeEnum(COLLAB_TARGET_TYPE),
+  targetId: idSchema,
+});
+
+export const addReminderRecipientSchema = z.object({
+  recipientUserId: idSchema,
+});
+
+export const snoozeReminderRecipientSchema = z.object({
+  snoozeMinutes: z.coerce.number().int().min(1).max(10080).default(15),
+  snoozedUntil: z.string().datetime().optional(),
+});
+
+export const listActivityQuerySchema = z.object({
+  workspaceId: idSchema,
+  targetType: z.nativeEnum(COLLAB_TARGET_TYPE).optional(),
+  targetId: idSchema.optional(),
+  activityType: z.nativeEnum(ACTIVITY_TYPE).optional(),
+  limit: z.coerce.number().int().positive().max(100).default(20),
 });

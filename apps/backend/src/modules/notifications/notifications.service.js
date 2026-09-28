@@ -53,6 +53,10 @@ export class NotificationsService {
     this.getTransport = pushTransportGetter;
   }
 
+  async sendNotification(data, client = undefined) {
+    return this.generateNotification(data, client);
+  }
+
   async generateNotification(data, client = undefined) {
     const {
       recipientUserId,

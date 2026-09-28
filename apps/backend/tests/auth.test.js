@@ -77,7 +77,8 @@ describe('Phase 4: Authentication and Identity (Firebase Authority)', () => {
       const decoded = JSON.parse(Buffer.from(encrypted, 'base64').toString('utf8'));
 
       // Tamper with ciphertext
-      decoded.ciphertext = decoded.ciphertext.slice(0, -2) + 'aa';
+      decoded.ciphertext =
+        decoded.ciphertext.slice(0, -2) + (decoded.ciphertext.slice(-2) === 'aa' ? 'bb' : 'aa');
       const tampered = Buffer.from(JSON.stringify(decoded)).toString('base64');
 
       expect(() => decryptCredentials(tampered)).toThrow();
@@ -706,6 +707,135 @@ describe('Phase 4: Authentication and Identity (Firebase Authority)', () => {
       expect(body.data[0].eventType).toBe('LOGIN_SUCCESS');
       // Verify no sensitive token hash leaked
       expect(body.data[0].metadata?.sessionTokenHash).toBeUndefined();
+    });
+  });
+
+  // =========================================================================
+  // 6. Google Workspace Onboarding & OAuth Boundary Integration
+  // =========================================================================
+  describe('6. Google Workspace Onboarding & OAuth Authorization Boundary', () => {
+    let app;
+    let rawToken;
+
+    beforeEach(async () => {
+      app = await createApp();
+      const validToken = createMockFirebaseIdToken({
+        uid: 'firebase_workspace_onboarding_user',
+        email: 'workspace.onboarding@example.com',
+        name: 'Workspace Tester',
+      });
+
+      const loginRes = await app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/session',
+        payload: { idToken: validToken },
+      });
+      const body = JSON.parse(loginRes.payload);
+      rawToken = body.data.token;
+    });
+
+    it('reports DISCONNECTED with all services false when user has not authorized Google', async () => {
+      const statusRes = await app.inject({
+        method: 'GET',
+        url: '/api/v1/auth/google/status',
+        headers: { authorization: `Bearer ${rawToken}` },
+      });
+
+      expect(statusRes.statusCode).toBe(200);
+      const body = JSON.parse(statusRes.payload).data;
+      expect(body.connected).toBe(false);
+      expect(body.status).toBe('DISCONNECTED');
+      expect(body.services).toEqual({
+        calendar: false,
+        tasks: false,
+        drive: false,
+      });
+      // Security invariant: Zero secrets or tokens exposed
+      expect(body.accessToken).toBeUndefined();
+      expect(body.refreshToken).toBeUndefined();
+      expect(body.clientSecret).toBeUndefined();
+    });
+
+    it('generates authorization URL with narrowest scopes for WORKSPACE service', async () => {
+      const authRes = await app.inject({
+        method: 'GET',
+        url: '/api/v1/auth/google/authorize?service=WORKSPACE',
+        headers: { authorization: `Bearer ${rawToken}` },
+      });
+
+      expect(authRes.statusCode).toBe(200);
+      const body = JSON.parse(authRes.payload).data;
+      expect(body.service).toBe('WORKSPACE');
+      expect(body.state).toBeDefined();
+      expect(body.authorizationUrl).toContain('accounts.google.com/o/oauth2/v2/auth');
+      // Verify all 4 narrowest scopes are present
+      expect(body.scopes).toContain('https://www.googleapis.com/auth/calendar.events');
+      expect(body.scopes).toContain('https://www.googleapis.com/auth/calendar.readonly');
+      expect(body.scopes).toContain('https://www.googleapis.com/auth/tasks');
+      expect(body.scopes).toContain('https://www.googleapis.com/auth/drive.file');
+      expect(body.authorizationUrl).toContain(
+        encodeURIComponent('https://www.googleapis.com/auth/calendar.events'),
+      );
+    });
+
+    it('completes OAuth exchange for WORKSPACE and activates calendar, tasks, and drive services', async () => {
+      // 1. Initiate authorization to create state
+      const authRes = await app.inject({
+        method: 'GET',
+        url: '/api/v1/auth/google/authorize?service=WORKSPACE',
+        headers: { authorization: `Bearer ${rawToken}` },
+      });
+      const { state } = JSON.parse(authRes.payload).data;
+
+      // 2. Complete callback with code and state
+      const callbackRes = await app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/google/callback',
+        headers: { authorization: `Bearer ${rawToken}` },
+        payload: {
+          code: 'test_google_auth_code_workspace_123',
+          state,
+          service: 'WORKSPACE',
+        },
+      });
+
+      expect(callbackRes.statusCode).toBe(200);
+      const callbackBody = JSON.parse(callbackRes.payload).data;
+      expect(callbackBody.connected).toBe(true);
+      expect(callbackBody.service).toBe('WORKSPACE');
+
+      // 3. Verify status endpoint reports connected with all 3 services enabled
+      const statusRes = await app.inject({
+        method: 'GET',
+        url: '/api/v1/auth/google/status',
+        headers: { authorization: `Bearer ${rawToken}` },
+      });
+
+      expect(statusRes.statusCode).toBe(200);
+      const statusBody = JSON.parse(statusRes.payload).data;
+      expect(statusBody.connected).toBe(true);
+      expect(statusBody.services).toEqual({
+        calendar: true,
+        tasks: true,
+        drive: true,
+      });
+      // Encrypted credential security invariant: refresh and access tokens NOT leaked
+      expect(statusBody.refreshToken).toBeUndefined();
+      expect(statusBody.accessToken).toBeUndefined();
+      expect(statusBody.encryptedCredentials).toBeUndefined();
+    });
+
+    it('returns error HTML and posts GOOGLE_AUTH_ERROR on callback error or denial', async () => {
+      const errorRes = await app.inject({
+        method: 'GET',
+        url: '/api/v1/auth/google/callback?error=access_denied&error_description=User%20denied%20consent',
+      });
+
+      expect(errorRes.statusCode).toBe(200);
+      expect(errorRes.headers['content-type']).toContain('text/html');
+      expect(errorRes.payload).toContain('Authorization Cancelled');
+      expect(errorRes.payload).toContain('GOOGLE_AUTH_ERROR');
+      expect(errorRes.payload).toContain('access_denied');
     });
   });
 });

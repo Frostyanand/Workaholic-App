@@ -403,4 +403,93 @@ export const TRUSTED_PERMISSION = Object.freeze({
   VIEW_CALENDAR: 'trusted.calendar.view',
   VIEW_TASKS: 'trusted.tasks.view',
   EDIT_TASKS: 'trusted.tasks.edit',
+  VIEW_AVAILABILITY: 'trusted.availability.view',
+});
+
+export const COLLAB_TARGET_TYPE = Object.freeze({
+  TASK: 'TASK',
+  PROJECT: 'PROJECT',
+  NOTE: 'NOTE',
+});
+
+export const ACTIVITY_TYPE = Object.freeze({
+  TASK_ASSIGNED: 'TASK_ASSIGNED',
+  COMMENT_CREATED: 'COMMENT_CREATED',
+  COMMENT_DELETED: 'COMMENT_DELETED',
+  MEMBER_ADDED: 'MEMBER_ADDED',
+  MEMBER_REMOVED: 'MEMBER_REMOVED',
+  ROLE_UPDATED: 'ROLE_UPDATED',
+  TRUST_ESTABLISHED: 'TRUST_ESTABLISHED',
+  TRUST_REVOKED: 'TRUST_REVOKED',
+  REMINDER_SHARED: 'REMINDER_SHARED',
+});
+
+export const NOTE_CONTENT_FORMAT = Object.freeze({
+  STRUCTURED: 'STRUCTURED',
+  MARKDOWN: 'MARKDOWN',
+  HTML: 'HTML',
+  PLAIN_TEXT: 'PLAIN_TEXT',
+});
+
+export const NOTE_RELATIONSHIP_TARGET_TYPE = Object.freeze({
+  TASK: 'TASK',
+  PROJECT: 'PROJECT',
+  EVENT: 'EVENT',
+  NOTE: 'NOTE',
+  BOARD: 'BOARD',
+  PERSON: 'PERSON',
+});
+
+export const NOTE_RELATIONSHIP_TYPE = Object.freeze({
+  RELATES_TO: 'RELATES_TO',
+  REFERENCES: 'REFERENCES',
+  DEPENDS_ON: 'DEPENDS_ON',
+  CONVERTED_FROM: 'CONVERTED_FROM',
+});
+
+export const NOTE_NODE_TYPE = Object.freeze({
+  PARAGRAPH: 'paragraph',
+  HEADING: 'heading',
+  BULLET_LIST: 'bullet_list',
+  ORDERED_LIST: 'ordered_list',
+  CHECKLIST: 'checklist',
+  LINK: 'link',
+  IMAGE: 'image',
+  CODE_BLOCK: 'code_block',
+  TABLE: 'table',
+});
+
+export const SEMESTER_STATUS = Object.freeze({
+  UPCOMING: 'UPCOMING',
+  ACTIVE: 'ACTIVE',
+  ENDED: 'ENDED',
+});
+
+export const ACADEMIC_DAY_STATUS = Object.freeze({
+  WORKING_DAY: 'WORKING_DAY',
+  HOLIDAY: 'HOLIDAY',
+  SPECIAL_WORKING_DAY: 'SPECIAL_WORKING_DAY',
+  OTHER_NON_WORKING_DAY: 'OTHER_NON_WORKING_DAY',
+});
+
+export const ACADEMIC_EXCEPTION_TYPE = Object.freeze({
+  CANCELLED: 'CANCELLED',
+  RESCHEDULED: 'RESCHEDULED',
+  EXTRA_CLASS: 'EXTRA_CLASS',
+});
+
+export const PUBLIC_LINK_STATUS = Object.freeze({
+  ACTIVE: 'ACTIVE',
+  REVOKED: 'REVOKED',
+});
+
+export const BOOKING_PAGE_STATUS = Object.freeze({
+  ACTIVE: 'ACTIVE',
+  DISABLED: 'DISABLED',
+});
+
+export const BOOKING_STATUS = Object.freeze({
+  CONFIRMED: 'CONFIRMED',
+  CANCELLED: 'CANCELLED',
+  RESCHEDULED: 'RESCHEDULED',
 });

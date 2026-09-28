@@ -1,5 +1,7 @@
 import { getApps, initializeApp, cert } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { AuthenticationFailedError } from '../../core/errors.js';
 import { config } from '../../core/config.js';
 
@@ -23,6 +25,16 @@ function getFirebaseAdminAuth() {
         clientEmail: config.firebaseClientEmail,
         privateKey: config.firebasePrivateKey.replace(/\\n/g, '\n'),
       });
+    } catch {
+      // Fall through to default credential or emulator
+    }
+  } else if (config.firebaseServiceAccountPath) {
+    try {
+      const resolvedPath = resolve(process.cwd(), config.firebaseServiceAccountPath);
+      if (existsSync(resolvedPath)) {
+        const fileContent = JSON.parse(readFileSync(resolvedPath, 'utf8'));
+        appOptions.credential = cert(fileContent);
+      }
     } catch {
       // Fall through to default credential or emulator
     }

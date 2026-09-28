@@ -123,6 +123,9 @@ textarea {
   .desktop-only {
     display: none !important;
   }
+  .workspace-badge-container {
+    display: none !important;
+  }
 }
 
 @media (min-width: 768px) {

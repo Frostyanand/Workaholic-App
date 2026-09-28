@@ -10,12 +10,22 @@ out/
 .vite/
 *.tsbuildinfo
 
-# Local Environment Variables
+# Local Environment Variables & Secrets
 .env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+.env.*
+!.env.example
+!.env.local.example
+*.pem
+*.key
+*.cert
+*.service-account.json
+*service-account*.json
+*serviceAccount*.json
+*serviceaccount*.json
+firebase-admin*.json
+firebase-service-account*.json
+credentials.json
+token.json
 
 # Databases & local stores
 *.sqlite

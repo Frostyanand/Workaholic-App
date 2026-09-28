@@ -40,5 +40,14 @@ export const config = Object.freeze({
   firebaseProjectId: process.env.FIREBASE_PROJECT_ID || 'workaholic-dev',
   firebaseClientEmail: process.env.FIREBASE_CLIENT_EMAIL || '',
   firebasePrivateKey: process.env.FIREBASE_PRIVATE_KEY || '',
+  firebaseServiceAccountPath: process.env.FIREBASE_SERVICE_ACCOUNT_PATH || '',
   firebaseAuthEmulatorHost: process.env.FIREBASE_AUTH_EMULATOR_HOST || '',
+  encryptionKey:
+    process.env.ENCRYPTION_KEY ||
+    process.env.JWT_SECRET ||
+    'workaholic-default-encryption-key-must-be-changed-in-prod',
+  googleClientId: process.env.GOOGLE_CLIENT_ID || '',
+  googleClientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
+  googleRedirectUri:
+    process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3001/api/v1/auth/google/callback',
 });

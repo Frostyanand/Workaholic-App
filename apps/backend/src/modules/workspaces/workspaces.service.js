@@ -1,4 +1,5 @@
 import * as workspacesRepo from './workspaces.repository.js';
+import { findUserByEmail } from '../users/users.repository.js';
 import { NotFoundError, ForbiddenError, ConflictError } from '../../core/errors.js';
 import { WORKSPACE_ROLE, MEMBERSHIP_STATUS } from '@workaholic/shared';
 
@@ -73,6 +74,7 @@ export class WorkspacesService {
 
   /**
    * Add a member to a workspace. Requester must be OWNER or ADMIN.
+   * Supports adding by userId or email.
    */
   async addMember(workspaceId, requesterUserId, memberData, client = undefined) {
     const workspace = await this.getWorkspaceById(workspaceId, requesterUserId, client);
@@ -87,10 +89,23 @@ export class WorkspacesService {
       throw new ForbiddenError('Administrators cannot grant owner role');
     }
 
+    let targetUserId = memberData.userId;
+    if (!targetUserId && memberData.email) {
+      const user = await findUserByEmail(memberData.email, client);
+      if (!user) {
+        throw new NotFoundError(`No user found with email ${memberData.email}`);
+      }
+      targetUserId = user.id;
+    }
+
+    if (!targetUserId) {
+      throw new NotFoundError('User ID or email is required to add a member');
+    }
+
     try {
       return await this.repo.addWorkspaceMembership(
         workspaceId,
-        memberData.userId,
+        targetUserId,
         memberData.role || WORKSPACE_ROLE.MEMBER,
         memberData.status || MEMBERSHIP_STATUS.ACTIVE,
         client,
@@ -140,6 +155,44 @@ export class WorkspacesService {
     }
 
     return this.repo.updateMembershipRole(workspaceId, targetUserId, newRole, client);
+  }
+
+  /**
+   * Remove member from workspace (or member leaves workspace)
+   */
+  async removeMember(workspaceId, requesterUserId, targetUserId, client = undefined) {
+    const workspace = await this.getWorkspaceById(workspaceId, requesterUserId, client);
+    const requesterRole = workspace.membership.role;
+    const isSelf = requesterUserId === targetUserId;
+
+    if (
+      !isSelf &&
+      requesterRole !== WORKSPACE_ROLE.OWNER &&
+      requesterRole !== WORKSPACE_ROLE.ADMIN
+    ) {
+      throw new ForbiddenError('Only workspace owners and administrators can remove members');
+    }
+
+    const members = await this.repo.findWorkspaceMemberships(workspaceId, client);
+    const targetMember = members.find(m => m.userId === targetUserId);
+
+    if (!targetMember) {
+      throw new NotFoundError('Member not found in workspace');
+    }
+
+    if (targetMember.role === WORKSPACE_ROLE.OWNER && targetUserId === workspace.ownerUserId) {
+      throw new ForbiddenError('Workspace owner cannot be removed from workspace');
+    }
+
+    if (
+      !isSelf &&
+      requesterRole === WORKSPACE_ROLE.ADMIN &&
+      (targetMember.role === WORKSPACE_ROLE.OWNER || targetMember.role === WORKSPACE_ROLE.ADMIN)
+    ) {
+      throw new ForbiddenError('Administrators cannot remove owners or other administrators');
+    }
+
+    return this.repo.removeWorkspaceMembership(workspaceId, targetUserId, client);
   }
 }
 

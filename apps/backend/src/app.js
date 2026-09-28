@@ -24,6 +24,16 @@ import {
 import { devicesRoutes } from './modules/devices/devices.routes.js';
 import { integrationsRoutes } from './modules/integrations/integrations.routes.js';
 import { attachmentsRoutes } from './modules/attachments/attachments.routes.js';
+import { academicRoutes } from './modules/academic/academic.routes.js';
+import {
+  publicCalendarRoutes,
+  publicConsumptionRoutes,
+} from './modules/public-calendar/public-calendar.routes.js';
+import { bookingManagementRoutes, publicBookingRoutes } from './modules/booking/booking.routes.js';
+import {
+  trustedRoutes,
+  collaborationRoutes,
+} from './modules/collaboration/collaboration.routes.js';
 import { startReminderDispatcher } from './modules/notifications/reminder-dispatcher.js';
 
 export function createApp(opts = {}) {
@@ -130,6 +140,14 @@ export function createApp(opts = {}) {
   app.register(devicesRoutes, { prefix: '/api/v1/devices' });
   app.register(integrationsRoutes, { prefix: '/api/v1/integrations' });
   app.register(attachmentsRoutes, { prefix: '/api/v1/attachments' });
+  app.register(academicRoutes, { prefix: '/api/v1/academic' });
+  app.register(publicCalendarRoutes, { prefix: '/api/v1' });
+  app.register(publicConsumptionRoutes, { prefix: '' });
+  app.register(bookingManagementRoutes, { prefix: '/api/v1/booking' });
+  app.register(publicBookingRoutes, { prefix: '/api/v1' });
+  app.register(publicBookingRoutes, { prefix: '' });
+  app.register(trustedRoutes, { prefix: '/api/v1/trusted' });
+  app.register(collaborationRoutes, { prefix: '/api/v1/collaboration' });
 
   // Start in-process reminder dispatcher for Phase 11
   startReminderDispatcher(app);

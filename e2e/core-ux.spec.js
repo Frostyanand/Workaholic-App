@@ -322,4 +322,99 @@ test.describe('Core Web UX E2E Journeys', () => {
       expect(hasHorizontalScroll).toBe(false);
     }
   });
+
+  test('Settings & Workspaces Page renders and supports tab switching', async ({ page }) => {
+    await page.route('**/api/v1/workspaces', async route => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          data: [
+            {
+              id: 'ws-e2e',
+              name: 'E2E Workspace',
+              workspaceType: 'TEAM',
+              membership: { role: 'OWNER', status: 'ACTIVE' },
+            },
+          ],
+        }),
+      });
+    });
+
+    await page.route('**/api/v1/workspaces/ws-e2e/members', async route => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          data: [
+            {
+              id: 'mem-e2e-1',
+              userId: 'usr-e2e-1',
+              displayName: 'E2E Admin',
+              email: 'admin@e2e.test',
+              role: 'OWNER',
+              status: 'ACTIVE',
+            },
+          ],
+        }),
+      });
+    });
+
+    await page.route('**/api/v1/users/me', async route => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          data: {
+            id: 'usr-e2e-1',
+            displayName: 'E2E Admin',
+            email: 'admin@e2e.test',
+            timezone: 'UTC',
+          },
+        }),
+      });
+    });
+
+    await page.route('**/api/v1/auth/sessions', async route => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          data: [
+            {
+              id: 'sess-e2e',
+              sessionType: 'WEB',
+              createdAt: new Date().toISOString(),
+              isCurrent: true,
+            },
+          ],
+        }),
+      });
+    });
+
+    await page.route('**/api/v1/auth/devices', async route => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ data: [] }),
+      });
+    });
+
+    await page.goto('/settings');
+
+    // Verify Settings & Workspaces page header and active workspace
+    await expect(page.getByRole('heading', { name: 'Settings & Workspaces' })).toBeVisible();
+    await expect(page.locator('body')).toContainText('E2E Workspace');
+    await expect(page.locator('body')).toContainText('E2E Admin');
+
+    // Switch to Profile & Preferences
+    await page.click('button:has-text("Profile & Preferences")');
+    await expect(page.locator('body')).toContainText('Personal Profile');
+    await expect(page.locator('input[disabled]')).toHaveValue('admin@e2e.test');
+
+    // Switch to Security & Sessions
+    await page.click('button:has-text("Security & Sessions")');
+    await expect(page.locator('body')).toContainText('Active Sessions');
+    await expect(page.locator('body')).toContainText('Current Browser Session');
+  });
 });

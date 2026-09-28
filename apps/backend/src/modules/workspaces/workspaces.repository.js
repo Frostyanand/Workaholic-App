@@ -181,14 +181,34 @@ export async function findMembership(workspaceId, userId, client = pool) {
 
 /**
  * Add a member to a workspace
- * @param {object} membershipData
- * @param {import('pg').Pool | import('pg').PoolClient} [client=pool]
+ * Supports both object parameter `{ workspaceId, userId, role, status }` and positional arguments.
  */
-export async function addWorkspaceMembership(membershipData, client = pool) {
-  if (!membershipData || typeof membershipData !== 'object') {
-    throw new TypeError('membershipData must be an object');
+export async function addWorkspaceMembership(
+  membershipDataOrWsId,
+  maybeUserId,
+  maybeRole,
+  maybeStatus,
+  client = pool,
+) {
+  let workspaceId;
+  let userId;
+  let role = 'MEMBER';
+  let status = 'ACTIVE';
+  let dbClient = client;
+
+  if (typeof membershipDataOrWsId === 'object' && membershipDataOrWsId !== null) {
+    workspaceId = membershipDataOrWsId.workspaceId;
+    userId = membershipDataOrWsId.userId;
+    role = membershipDataOrWsId.role || 'MEMBER';
+    status = membershipDataOrWsId.status || 'ACTIVE';
+    dbClient = maybeUserId || client;
+  } else {
+    workspaceId = membershipDataOrWsId;
+    userId = maybeUserId;
+    role = maybeRole || 'MEMBER';
+    status = maybeStatus || 'ACTIVE';
+    dbClient = typeof maybeStatus === 'object' && maybeStatus !== null ? maybeStatus : client;
   }
-  const { workspaceId, userId, role = 'MEMBER', status = 'ACTIVE' } = membershipData;
 
   if (!workspaceId || !userId) {
     throw new Error('workspaceId and userId are required');
@@ -205,10 +225,36 @@ export async function addWorkspaceMembership(membershipData, client = pool) {
       joined_at
     )
     VALUES ($1, $2, $3, $4, $5)
+    ON CONFLICT (workspace_id, user_id) DO UPDATE
+      SET role = EXCLUDED.role,
+          status = EXCLUDED.status,
+          joined_at = COALESCE(workspace_memberships.joined_at, EXCLUDED.joined_at),
+          updated_at = CURRENT_TIMESTAMP
     RETURNING id, workspace_id, user_id, role, status, joined_at, created_at, updated_at
   `;
-  const result = await query(sql, [workspaceId, userId, role, status, joinedAt], client);
+  const result = await query(sql, [workspaceId, userId, role, status, joinedAt], dbClient);
   return mapMembershipRow(result.rows[0]);
+}
+
+/**
+ * Remove (or mark removed) member from workspace
+ * @param {string} workspaceId
+ * @param {string} userId
+ * @param {import('pg').Pool | import('pg').PoolClient} [client=pool]
+ */
+export async function removeWorkspaceMembership(workspaceId, userId, client = pool) {
+  if (!workspaceId || !userId) {
+    throw new Error('workspaceId and userId are required');
+  }
+
+  const sql = `
+    UPDATE workspace_memberships
+    SET status = 'REMOVED', updated_at = CURRENT_TIMESTAMP
+    WHERE workspace_id = $1 AND user_id = $2
+    RETURNING id, workspace_id, user_id, role, status, joined_at, created_at, updated_at
+  `;
+  const result = await query(sql, [workspaceId, userId], client);
+  return result.rows.length > 0 ? mapMembershipRow(result.rows[0]) : null;
 }
 
 /**

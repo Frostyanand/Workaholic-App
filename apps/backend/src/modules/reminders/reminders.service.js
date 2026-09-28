@@ -292,14 +292,21 @@ export class RemindersService {
     // Verify recipient permissions
     const membership = await this.workspaceRepo.findMembership(workspaceId, newRecipientUserId);
     if (!membership || membership.status !== 'ACTIVE') {
-      const hasPermission = await this.trustedRepo.hasTrustedPermission(
-        newRecipientUserId,
-        requestingUser.id,
-        TRUSTED_PERMISSION.RECEIVE_REMINDERS,
-      );
+      const hasPermission =
+        (await this.trustedRepo.hasTrustedPermission(
+          requestingUser.id,
+          newRecipientUserId,
+          TRUSTED_PERMISSION.RECEIVE_REMINDERS,
+        )) ||
+        (await this.trustedRepo.hasTrustedPermission(
+          newRecipientUserId,
+          requestingUser.id,
+          TRUSTED_PERMISSION.RECEIVE_REMINDERS,
+        ));
+
       if (!hasPermission) {
         throw new ForbiddenError(
-          'Recipient has not granted permission to receive shared reminders',
+          'Recipient has not granted or received permission to receive shared reminders',
         );
       }
     }
@@ -315,6 +322,11 @@ export class RemindersService {
       );
     }
     return this.repo.removeRecipient(id, targetUserId);
+  }
+
+  async listRecipients(id, requestingUser, workspaceId) {
+    await this.getReminder(id, workspaceId);
+    return this.repo.findRecipientsByReminderId(id);
   }
 
   // Hook for task completion

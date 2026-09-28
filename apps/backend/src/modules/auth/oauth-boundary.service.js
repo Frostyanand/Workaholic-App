@@ -1,7 +1,7 @@
 import { generateOAuthState, encryptCredentials, decryptCredentials } from '../../core/crypto.js';
 import * as integrationsRepo from './integrations.repository.js';
 import * as securityEventsRepo from './security-events.repository.js';
-import { ValidationError, NotFoundError } from '../../core/errors.js';
+import { ValidationError, NotFoundError, ExternalServiceError } from '../../core/errors.js';
 import { config } from '../../core/config.js';
 
 /**
@@ -15,9 +15,15 @@ export const GOOGLE_API_SCOPES = {
   ],
   TASKS: ['https://www.googleapis.com/auth/tasks'],
   DRIVE: ['https://www.googleapis.com/auth/drive.file'],
+  WORKSPACE: [
+    'https://www.googleapis.com/auth/calendar.events',
+    'https://www.googleapis.com/auth/calendar.readonly',
+    'https://www.googleapis.com/auth/tasks',
+    'https://www.googleapis.com/auth/drive.file',
+  ],
 };
 
-export const SUPPORTED_SERVICES = ['CALENDAR', 'TASKS', 'DRIVE'];
+export const SUPPORTED_SERVICES = ['CALENDAR', 'TASKS', 'DRIVE', 'WORKSPACE'];
 
 /**
  * OAuth Boundary Service managing external Google API permissions.
@@ -142,6 +148,14 @@ export class OAuthBoundaryService {
     let tokenData;
     if (tokenExchangeAdapter) {
       tokenData = await tokenExchangeAdapter(code);
+    } else if (
+      config.googleClientId &&
+      config.googleClientSecret &&
+      !config.googleClientId.startsWith('mock_') &&
+      config.googleClientId !== 'YOUR_GOOGLE_CLIENT_ID' &&
+      config.env !== 'test'
+    ) {
+      tokenData = await this.exchangeCodeWithGoogle(code);
     } else {
       tokenData = {
         accessToken: `mock_access_token_${Date.now()}`,
@@ -258,6 +272,11 @@ export class OAuthBoundaryService {
         connected: false,
         status: integration?.status || 'DISCONNECTED',
         scopes: [],
+        services: {
+          calendar: false,
+          tasks: false,
+          drive: false,
+        },
       };
     }
 
@@ -268,15 +287,27 @@ export class OAuthBoundaryService {
     );
 
     const scopes = account?.scopes || [];
+    const hasCalendar = GOOGLE_API_SCOPES.CALENDAR.some(s => scopes.includes(s));
+    const hasTasks = GOOGLE_API_SCOPES.TASKS.some(s => scopes.includes(s));
+    const hasDrive = GOOGLE_API_SCOPES.DRIVE.some(s => scopes.includes(s));
+
     if (service) {
       const requiredScopes = GOOGLE_API_SCOPES[service.toUpperCase()] || [];
-      const hasScope = requiredScopes.some(s => scopes.includes(s));
+      const hasScope =
+        service.toUpperCase() === 'WORKSPACE'
+          ? hasCalendar || hasTasks || hasDrive
+          : requiredScopes.some(s => scopes.includes(s));
       if (!hasScope) {
         return {
           connected: false,
           status: 'DISCONNECTED',
           scopes,
           accountDisplayName: account?.displayName || null,
+          services: {
+            calendar: hasCalendar,
+            tasks: hasTasks,
+            drive: hasDrive,
+          },
         };
       }
     }
@@ -287,6 +318,62 @@ export class OAuthBoundaryService {
       connectedAt: integration.connectedAt,
       scopes,
       accountDisplayName: account?.displayName || null,
+      services: {
+        calendar: hasCalendar,
+        tasks: hasTasks,
+        drive: hasDrive,
+      },
+    };
+  }
+
+  /**
+   * Exchanges authorization code with Google's OAuth 2.0 token endpoint.
+   * @param {string} code Authorization code from Google redirect
+   * @returns {Promise<{ accessToken: string, refreshToken: string|null, externalAccountId: string, displayName: string }>}
+   */
+  async exchangeCodeWithGoogle(code) {
+    const params = new URLSearchParams({
+      code,
+      client_id: config.googleClientId,
+      client_secret: config.googleClientSecret,
+      redirect_uri: config.googleRedirectUri,
+      grant_type: 'authorization_code',
+    });
+
+    const response = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: params.toString(),
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+      throw new ExternalServiceError(
+        data.error_description || data.error || 'Failed to exchange authorization code with Google',
+      );
+    }
+
+    let externalAccountId = 'google_account';
+    let displayName = 'Google Connected Account';
+
+    if (data.id_token) {
+      try {
+        const parts = data.id_token.split('.');
+        const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+        externalAccountId = payload.sub || payload.email || externalAccountId;
+        displayName = payload.name || payload.email || displayName;
+      } catch {
+        // Fall back to default identifiers
+      }
+    }
+
+    return {
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token || null,
+      externalAccountId,
+      displayName,
     };
   }
 

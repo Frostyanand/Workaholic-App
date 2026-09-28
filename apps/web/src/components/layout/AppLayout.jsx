@@ -8,7 +8,9 @@ import {
   Calendar,
   GraduationCap,
   FileText,
+  CalendarClock,
   Settings,
+  Users,
   LogOut,
   X,
 } from 'lucide-react';
@@ -26,6 +28,8 @@ const navItems = [
   { to: '/calendar', label: 'Calendar', icon: Calendar },
   { to: '/academic', label: 'Academic', icon: GraduationCap },
   { to: '/notes', label: 'Notes', icon: FileText },
+  { to: '/booking', label: 'Booking', icon: CalendarClock },
+  { to: '/collaboration', label: 'Collaboration', icon: Users },
   { to: '/settings', label: 'Settings', icon: Settings },
 ];
 

@@ -14,10 +14,24 @@ const createWorkspaceInputSchema = z.object({
   workspaceType: z.enum(['PERSONAL', 'TEAM']).default('PERSONAL'),
 });
 
-const addMemberInputSchema = z.object({
+const addMemberInputSchema = z
+  .object({
+    userId: idSchema.optional(),
+    email: z.string().email().optional(),
+    role: z.enum(['OWNER', 'ADMIN', 'MEMBER', 'VIEWER']).default('MEMBER'),
+    status: z.enum(['INVITED', 'ACTIVE', 'SUSPENDED', 'REMOVED']).default('ACTIVE'),
+  })
+  .refine(data => data.userId || data.email, {
+    message: 'Either userId or email is required',
+  });
+
+const memberParamsSchema = z.object({
+  id: idSchema,
   userId: idSchema,
-  role: z.enum(['OWNER', 'ADMIN', 'MEMBER', 'VIEWER']).default('MEMBER'),
-  status: z.enum(['INVITED', 'ACTIVE', 'SUSPENDED', 'REMOVED']).default('ACTIVE'),
+});
+
+const updateMemberRoleInputSchema = z.object({
+  role: z.enum(['OWNER', 'ADMIN', 'MEMBER', 'VIEWER']),
 });
 
 /**
@@ -109,6 +123,46 @@ export async function workspacesRoutes(fastify, _opts) {
         request.validated.body,
       );
       return sendSuccess(reply, member, 201);
+    },
+  );
+
+  // Update member role (OWNER or ADMIN only)
+  fastify.patch(
+    '/:id/members/:userId',
+    {
+      preHandler: [requireAuth],
+      preValidation: [
+        validateRequest({
+          params: memberParamsSchema,
+          body: updateMemberRoleInputSchema,
+        }),
+      ],
+    },
+    async (request, reply) => {
+      const updated = await workspacesService.updateMemberRole(
+        request.params.id,
+        request.user.id,
+        request.params.userId,
+        request.validated.body.role,
+      );
+      return sendSuccess(reply, updated);
+    },
+  );
+
+  // Remove member from workspace (OWNER/ADMIN or self-leave)
+  fastify.delete(
+    '/:id/members/:userId',
+    {
+      preHandler: [requireAuth],
+      preValidation: [validateRequest({ params: memberParamsSchema })],
+    },
+    async (request, reply) => {
+      const result = await workspacesService.removeMember(
+        request.params.id,
+        request.user.id,
+        request.params.userId,
+      );
+      return sendSuccess(reply, { removed: true, member: result });
     },
   );
 }

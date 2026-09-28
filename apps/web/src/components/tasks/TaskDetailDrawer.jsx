@@ -4,6 +4,8 @@ import { Button } from '../common/Button.jsx';
 import { ErrorBanner } from '../common/ErrorBanner.jsx';
 import * as tasksApi from '../../services/tasks.api.js';
 import { TaskAttachments } from '../attachments/TaskAttachments.jsx';
+import { CommentSection } from '../collaboration/CommentSection.jsx';
+import { listEligibleMembers } from '../../services/collaboration.api.js';
 
 export function TaskDetailDrawer({ task, isOpen, onClose, onTaskUpdated }) {
   const [activeTask, setActiveTask] = useState(task);
@@ -13,6 +15,8 @@ export function TaskDetailDrawer({ task, isOpen, onClose, onTaskUpdated }) {
   const [status, setStatus] = useState('TODO');
   const [dueAt, setDueAt] = useState('');
   const [estimatedDuration, setEstimatedDuration] = useState('');
+  const [assigneeUserId, setAssigneeUserId] = useState('');
+  const [eligibleMembers, setEligibleMembers] = useState([]);
   const [newSubtaskTitle, setNewSubtaskTitle] = useState('');
   const [newLabelName, setNewLabelName] = useState('');
   const [saving, setSaving] = useState(false);
@@ -96,7 +100,14 @@ export function TaskDetailDrawer({ task, isOpen, onClose, onTaskUpdated }) {
       setStatus(task.status || 'TODO');
       setDueAt(task.dueAt ? task.dueAt.slice(0, 16) : '');
       setEstimatedDuration(task.estimatedDuration ? String(task.estimatedDuration) : '');
+      setAssigneeUserId(task.assigneeUserId || '');
       setError(null);
+
+      if (task.workspaceId) {
+        listEligibleMembers(task.workspaceId)
+          .then(setEligibleMembers)
+          .catch(() => {});
+      }
     }
   }, [task]);
 
@@ -114,6 +125,7 @@ export function TaskDetailDrawer({ task, isOpen, onClose, onTaskUpdated }) {
         status,
         dueAt: dueAt ? new Date(dueAt).toISOString() : null,
         estimatedDuration: estimatedDuration ? parseInt(estimatedDuration, 10) : null,
+        assigneeUserId: assigneeUserId || null,
         version: activeTask.version,
       };
 
@@ -477,6 +489,40 @@ export function TaskDetailDrawer({ task, isOpen, onClose, onTaskUpdated }) {
             </div>
           </div>
 
+          {/* Assignee Field (Phase 21: Trusted Sharing & Collaboration) */}
+          <div style={{ marginBottom: '16px' }}>
+            <label
+              style={{
+                display: 'block',
+                fontSize: '0.8rem',
+                color: 'var(--text-muted)',
+                marginBottom: '4px',
+              }}
+            >
+              Assignee
+            </label>
+            <select
+              value={assigneeUserId}
+              onChange={e => setAssigneeUserId(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '8px 12px',
+                backgroundColor: 'var(--bg-surface)',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: 'var(--radius-sm)',
+                color: 'var(--text-primary)',
+                fontSize: '0.85rem',
+              }}
+            >
+              <option value="">Unassigned</option>
+              {eligibleMembers.map(m => (
+                <option key={m.userId} value={m.userId}>
+                  {m.userDisplayName || m.userEmail} ({m.role})
+                </option>
+              ))}
+            </select>
+          </div>
+
           {/* Description Field */}
           <div style={{ marginBottom: '24px' }}>
             <label
@@ -716,6 +762,15 @@ export function TaskDetailDrawer({ task, isOpen, onClose, onTaskUpdated }) {
           {/* Attachments Section (Phase 15: Google Drive) */}
           {activeTask?.id && (
             <TaskAttachments taskId={activeTask.id} workspaceId={activeTask.workspaceId} />
+          )}
+
+          {/* Comments Section (Phase 21: Trusted Sharing & Collaboration) */}
+          {activeTask?.id && (
+            <CommentSection
+              targetType="TASK"
+              targetId={activeTask.id}
+              workspaceId={activeTask.workspaceId}
+            />
           )}
 
           {/* Metadata section */}

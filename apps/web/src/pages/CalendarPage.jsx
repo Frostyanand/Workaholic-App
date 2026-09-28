@@ -10,6 +10,7 @@ import { CreateEventModal } from '../components/calendar/CreateEventModal.jsx';
 import { EventDetailModal } from '../components/calendar/EventDetailModal.jsx';
 import { CreateCalendarModal } from '../components/calendar/CreateCalendarModal.jsx';
 import { GoogleSyncModal } from '../components/calendar/GoogleSyncModal.jsx';
+import { PublicCalendarModal } from '../components/calendar/PublicCalendarModal.jsx';
 import { LoadingSpinner } from '../components/common/LoadingSpinner.jsx';
 import { ErrorBanner } from '../components/common/ErrorBanner.jsx';
 import {
@@ -47,12 +48,22 @@ export function CalendarPage() {
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [isCreateCalendarModalOpen, setIsCreateCalendarModalOpen] = useState(false);
   const [isGoogleSyncModalOpen, setIsGoogleSyncModalOpen] = useState(false);
+  const [isPublicCalendarModalOpen, setIsPublicCalendarModalOpen] = useState(false);
+  const [sharingCalendar, setSharingCalendar] = useState(null);
   const [isFilterOpen, setIsFilterOpen] = useState(true);
 
   const [selectedEvent, setSelectedEvent] = useState(null);
   const [editingEvent, setEditingEvent] = useState(null);
   const [slotDate, setSlotDate] = useState(null);
   const [slotHour, setSlotHour] = useState(undefined);
+
+  const handleOpenShareCalendar = calToShare => {
+    const target = calToShare || calendars.find(c => c.isDefault) || calendars[0];
+    if (target) {
+      setSharingCalendar(target);
+      setIsPublicCalendarModalOpen(true);
+    }
+  };
 
   // 1. Fetch Calendars
   const loadCalendars = useCallback(async () => {
@@ -270,6 +281,7 @@ export function CalendarPage() {
         }}
         onToggleFilter={() => setIsFilterOpen(prev => !prev)}
         isFilterOpen={isFilterOpen}
+        onShareCalendar={() => handleOpenShareCalendar()}
       />
 
       {error && (
@@ -293,6 +305,8 @@ export function CalendarPage() {
             onToggleTasks={setIncludeTasks}
             onCreateCalendar={() => setIsCreateCalendarModalOpen(true)}
             onOpenGoogleSync={() => setIsGoogleSyncModalOpen(true)}
+            onShareCalendar={cal => handleOpenShareCalendar(cal)}
+            onOpenPublicShare={() => handleOpenShareCalendar()}
           />
         )}
 
@@ -419,6 +433,16 @@ export function CalendarPage() {
         onSyncComplete={() => {
           loadCalendars();
           loadEvents();
+        }}
+      />
+
+      <PublicCalendarModal
+        isOpen={isPublicCalendarModalOpen}
+        onClose={() => setIsPublicCalendarModalOpen(false)}
+        calendar={sharingCalendar}
+        workspaceId={workspaceId}
+        onLinkUpdated={() => {
+          loadCalendars();
         }}
       />
     </div>

@@ -12,6 +12,7 @@ export function CalendarHeader({
   onCreateEvent,
   onToggleFilter,
   isFilterOpen,
+  onShareCalendar,
 }) {
   const views = [
     { id: 'DAY', label: 'Day' },
@@ -128,6 +129,18 @@ export function CalendarHeader({
         >
           Calendars
         </Button>
+
+        {/* Share Public Link Button */}
+        {onShareCalendar && (
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={onShareCalendar}
+            aria-label="Share calendar public link"
+          >
+            🔗 Share Link
+          </Button>
+        )}
 
         {/* Action Buttons */}
         <Button

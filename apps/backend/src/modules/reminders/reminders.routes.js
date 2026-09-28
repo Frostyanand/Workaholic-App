@@ -184,4 +184,21 @@ export async function remindersRoutes(fastify, _opts) {
       return sendSuccess(reply, { removed: true });
     },
   );
+
+  // 10. List Shared Recipients
+  fastify.get(
+    '/:id/recipients',
+    {
+      preHandler: authHooks,
+      preValidation: [validateRequest({ params: reminderIdParamsSchema })],
+    },
+    async (request, reply) => {
+      const recipients = await remindersService.listRecipients(
+        request.params.id,
+        request.user,
+        request.workspace.id,
+      );
+      return sendSuccess(reply, recipients);
+    },
+  );
 }
